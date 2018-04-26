@@ -13,7 +13,7 @@ def parse_arg():
     parser = optparse.OptionParser()
     parser.add_option('-g', dest='gpu_id', default='0', help='specify to run on which GPU')
     parser.add_option('-f', dest='gpu_frac', default='0.49', help='specify the memory utilization of GPU')
-    parser.add_option('-r', dest='restore', action='store_true', default=False, help="continue training? default=False")
+    parser.add_option('-r', dest='restore_iter_id', default=None, help="continue training? default=False")
     (options, args) = parser.parse_args()
     return options
 
@@ -268,9 +268,9 @@ class GAIN():
 if __name__ == "__main__":
     opt = parse_arg()
     os.environ["CUDA_VISIBLE_DEVICES"] = opt.gpu_id
-    batch_size = 1 # actual batch size=batch_size*accum_num
+    batch_size = 2 # actual batch size=batch_size*accum_num
     input_size, category_num, epoches = (321,321), 21, 30
     data = dataset({"batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "categorys":["train"]})
-    if not opt.restore: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "init_model_path":"./model/init.npy", "accum_num":16})
-    else: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "model_path":"{}/norm-2999".format(SAVER_PATH), "accum_num":16})
+    if opt.restore_iter_id == None: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "init_model_path":"./model/init.npy", "accum_num":16})
+    else: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "model_path":"{}/norm-{}".format(SAVER_PATH, opt.restore_iter_id), "accum_num":16})
     gain.train(base_lr=1e-3, weight_decay=5e-5, momentum=0.9, batch_size=batch_size, epoches=epoches, gpu_frac=float(opt.gpu_frac))
