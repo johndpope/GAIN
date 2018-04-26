@@ -9,7 +9,7 @@ import skimage
 import skimage.io as imgio
 import pydensecrf.densecrf as dcrf
 
-def crf_inference(feat,img,crf_config,categorys_num,gt_prob=0.7,use_log=False):
+def crf_inference(feat, img, crf_config, categorys_num, gt_prob=0.7, use_log=False):
     '''
     feat: the feature map of cnn, shape [h,w,c] , shape [h,w], float32
     img: the origin img, shape [h,w,3], uint8

@@ -85,7 +85,6 @@ class GAIN():
                     self.stride[player] = c*self.stride[last_layer]
                     self.net[player] = tf.nn.max_pool(self.net[last_layer],ksize=[1,3,3,1],strides=s,padding="SAME",name="pool")
                 else: raise Exception("Unimplemented layer: {}".format(layer))
-                print("layer {}={}".format(player, self.net[player].shape))
                 last_layer = player
         return last_layer
     def build_fc(self, last_layer, layer_lists, is_exist=False):
@@ -112,7 +111,7 @@ class GAIN():
         self.net[player] = self.net[player]/tf.reduce_sum(self.net[player], axis=3, keepdims=True)
         return player
     def build_crf(self, featemap_layer, img_layer):
-        def crf(featemap,image):
+        def crf(featemap, image):
             crf_config = {"g_sxy":3/12,"g_compat":3,"bi_sxy":80/12,"bi_srgb":13,"bi_compat":10,"iterations":5}
             batch_size = featemap.shape[0]
             image = image.astype(np.uint8)
@@ -139,7 +138,7 @@ class GAIN():
         model_path = self.config["init_model_path"]
         self.init_model = np.load(model_path,encoding="latin1").item()
         print("load init model success: %s" % model_path)
-    def restore_from_model(self,saver,model_path,checkpoint=False):
+    def restore_from_model(self, saver, model_path, checkpoint=False):
         assert self.sess is not None
         if checkpoint: saver.restore(self.sess, tf.train.get_checkpoint_state(model_path).model_checkpoint_path)
         else: saver.restore(self.sess, model_path)
@@ -195,11 +194,11 @@ class GAIN():
         w, h = int((self.cw+7)/8), int((self.ch+7)/8)
         return tf.reduce_mean(tf.reduce_sum(tf.reshape(self.net["input_c-fc8-softmax"][:,:,:,1:], (-1,(category_num-1)*(category_num-1)*w*h)), axis=1)/tf.cast(tf.reduce_sum(self.net["label"][:,1:], axis=1), tf.float32))
 
-    def optimize(self,base_lr,momentum,weight_decay):
+    def optimize(self, base_lr, momentum, weight_decay):
         self.loss["loss_cl"] = self.get_cl_loss()
         self.loss["loss_am"] = self.get_am_loss()
         self.loss["norm"] = self.loss["loss_cl"] + self.loss["loss_am"]
-        self.loss["l2"] = sum([tf.nn.l2_loss(self.weights[layer][0]) for layer in self.weights])
+        self.loss["l2"] = tf.reduce_sum([tf.nn.l2_loss(self.weights[layer][0]) for layer in self.weights], axis=0)
         self.loss["total"] = self.loss["norm"] + weight_decay*self.loss["l2"]
         self.net["lr"] = tf.Variable(base_lr, trainable=False, dtype=tf.float32)
         opt = tf.train.MomentumOptimizer(self.net["lr"],momentum)
@@ -213,7 +212,7 @@ class GAIN():
             if v in self.lr_10_list: g = 10*g
             if v in self.lr_20_list: g = 20*g
             self.net["accum_gradient"].append(tf.Variable(tf.zeros_like(g),trainable=False))
-            self.net["accum_gradient_accum"].append(self.net["accum_gradient"][-1].assign_add( g/self.accum_num, use_locking=True))
+            self.net["accum_gradient_accum"].append(self.net["accum_gradient"][-1].assign_add(g/self.accum_num, use_locking=True))
             new_gradients.append((self.net["accum_gradient"][-1],v))
 
         self.net["accum_gradient_clean"] = [g.assign(tf.zeros_like(g)) for g in self.net["accum_gradient"]]
@@ -224,7 +223,7 @@ class GAIN():
         self.sess = tf.Session(config=gpu_options)
         x, _, y, c, id_of_image, iterator_train = self.data.next_batch(category="train",batch_size=batch_size,epoches=-1)
         self.build()
-        self.optimize(base_lr,momentum,weight_decay)
+        self.optimize(base_lr,momentum, weight_decay)
         self.saver["norm"] = tf.train.Saver(max_to_keep=2,var_list=self.trainable_list)
         self.saver["lr"] = tf.train.Saver(var_list=self.trainable_list)
         self.saver["best"] = tf.train.Saver(var_list=self.trainable_list,max_to_keep=2)
@@ -233,9 +232,9 @@ class GAIN():
             self.sess.run(tf.global_variables_initializer())
             self.sess.run(tf.local_variables_initializer())
             self.sess.run(iterator_train.initializer)
-            if self.config.get("model_path",False) is not False: self.restore_from_model(self.saver["norm"],self.config.get("model_path"),checkpoint=False)
+            if self.config.get("model_path",False) is not False: self.restore_from_model(self.saver["norm"], self.config.get("model_path"), checkpoint=False)
             start_time = time.time()
-            print("start_time: {}\nconfig -- lr:{} weight_decay:{} momentum:{} batch_size:{} epoches:{}".format(start_time, base_lr,weight_decay,momentum,batch_size,epoches))
+            print("start_time: {}\nconfig -- lr:{} weight_decay:{} momentum:{} batch_size:{} epoches:{}".format(start_time, base_lr, weight_decay, momentum, batch_size, epoches))
             
             epoch, i, iterations_per_epoch_train = 0.0, 0, self.data.get_data_len()//batch_size
             while epoch < epoches:
@@ -257,13 +256,13 @@ class GAIN():
                     _, _ = self.sess.run(self.net["accum_gradient_update"]), self.sess.run(self.net["accum_gradient_clean"])
                 if i%500 == 0:
                     loss_cl, loss_am, loss_l2, loss_total, lr = self.sess.run([self.loss["loss_cl"], self.loss["loss_am"], self.loss["l2"], self.loss["total"], self.net["lr"]], feed_dict=params)
-                    print("{:.1f}th epoch, {}iters, lr={:.5f}, loss={:.5f}+{:.5f}+{:.5f}={:.5f}".format(epoch, i, lr, loss_cl, loss_am, loss_l2, loss_total))
+                    print("{:.1f}th epoch, {}iters, lr={:.5f}, loss={:.5f}+{:.5f}+{:.5f}={:.5f}".format(epoch, i, lr, loss_cl, loss_am, weight_decay*loss_l2, loss_total))
                 if i%3000 == 2999:
                     self.saver["norm"].save(self.sess, os.path.join(self.config.get("saver_path",SAVER_PATH),"norm"), global_step=i)
                 i+=1
                 epoch = i/iterations_per_epoch_train
             end_time = time.time()
-            print(" end_time:{}\n duration time:{}".format(end_time, (end_time-start_time)))
+            print("end_time:{}\nduration time:{}".format(end_time, (end_time-start_time)))
 
 
 if __name__ == "__main__":
@@ -273,5 +272,5 @@ if __name__ == "__main__":
     input_size, category_num, epoches = (321,321), 21, 30
     data = dataset({"batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "categorys":["train"]})
     if not opt.restore: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "init_model_path":"./model/init.npy", "accum_num":16})
-    else: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "model_path":"{}/norm-xxx".format(SAVER_PATH), "accum_num":16})
+    else: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "model_path":"{}/norm-2999".format(SAVER_PATH), "accum_num":16})
     gain.train(base_lr=1e-3, weight_decay=5e-5, momentum=0.9, batch_size=batch_size, epoches=epoches, gpu_frac=float(opt.gpu_frac))
