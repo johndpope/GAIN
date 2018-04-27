@@ -128,7 +128,7 @@ class GAIN():
         image, atts = tf.image.resize_bilinear(self.net[img_layer], (self.cw,self.ch)), tf.image.resize_bilinear(self.net[att_layer], (self.cw,self.ch))
         layer = "input_c"
         rst = []
-        for att in tf.unstack(atts[:,:,:,1:], axis=3):
+        for att in tf.unstack(atts, axis=3):
             rst.append(tf.expand_dims(image-tf.reshape(tf.multiply(tf.reshape(image, (-1,3)), tf.reshape(att, (-1,1))), (-1,self.cw,self.ch,3)), axis=1))
         x = tf.stack(rst, axis=1)
         image_c = tf.reshape(x, (-1,self.cw,self.ch,3))
@@ -192,7 +192,7 @@ class GAIN():
     
     def get_am_loss(self):
         w, h = int((self.cw+7)/8), int((self.ch+7)/8)
-        return tf.reduce_mean(tf.reduce_sum(tf.reshape(self.net["input_c-fc8-softmax"][:,:,:,1:], (-1,(category_num-1)*(category_num-1)*w*h)), axis=1)/tf.cast(tf.reduce_sum(self.net["label"][:,1:], axis=1), tf.float32))
+        return tf.reduce_mean(tf.reduce_sum(tf.reshape(self.net["input_c-fc8-softmax"], (-1,(category_num)*(category_num)*w*h)), axis=1)/tf.cast(tf.reduce_sum(self.net["label"], axis=1), tf.float32))
 
     def optimize(self, base_lr, momentum, weight_decay):
         self.loss["loss_cl"] = self.get_cl_loss()
@@ -268,9 +268,9 @@ class GAIN():
 if __name__ == "__main__":
     opt = parse_arg()
     os.environ["CUDA_VISIBLE_DEVICES"] = opt.gpu_id
-    batch_size = 2 # actual batch size=batch_size*accum_num
+    batch_size = 1 # actual batch size=batch_size*accum_num
     input_size, category_num, epoches = (321,321), 21, 30
     data = dataset({"batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "categorys":["train"]})
-    if opt.restore_iter_id == None: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "init_model_path":"./model/init.npy", "accum_num":16})
-    else: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "model_path":"{}/norm-{}".format(SAVER_PATH, opt.restore_iter_id), "accum_num":16})
+    if opt.restore_iter_id == None: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "init_model_path":"./model/init.npy", "accum_num":12})
+    else: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "model_path":"{}/norm-{}".format(SAVER_PATH, opt.restore_iter_id), "accum_num":12})
     gain.train(base_lr=1e-3, weight_decay=5e-5, momentum=0.9, batch_size=batch_size, epoches=epoches, gpu_frac=float(opt.gpu_frac))
