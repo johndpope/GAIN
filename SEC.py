@@ -1,12 +1,27 @@
 import os
 import sys
 import time
+from six.moves import cPickle
 import numpy as np
+import scipy.ndimage as nd
+from PIL import Image
 import tensorflow as tf
-os.environ["CUDA_VISIBLE_DEVICES"] = sys.argv[1]
-SAVER_PATH = "sec-saver"
+import optparse
 from dataset import dataset
 from crf import crf_inference
+
+
+SAVER_PATH, PRED_PATH = "sec-saver", "sec-preds"
+
+def parse_arg():
+    parser = optparse.OptionParser()
+    parser.add_option('-g', dest='gpu_id', default='0', help='specify to run on which GPU')
+    parser.add_option('-f', dest='gpu_frac', default='0.49', help='specify the memory utilization of GPU')
+    parser.add_option('-r', dest='restore_iter_id', default=None, help="continue training? default=False")
+    parser.add_option('-a', dest='action', default='train', help="training or inference?")
+    (options, args) = parser.parse_args()
+    return options
+
 
 class SEC():
     def __init__(self,config):
@@ -299,8 +314,8 @@ class SEC():
         self.net["accum_gradient_clean"] = [g.assign(tf.zeros_like(g)) for g in self.net["accum_gradient"]]
         self.net["accum_gradient_update"]  = opt.apply_gradients(new_gradients)
 
-    def train(self,base_lr,weight_decay,momentum,batch_size,epoches):
-        gpu_options = tf.ConfigProto(gpu_options=tf.GPUOptions(per_process_gpu_memory_fraction=0.49))
+    def train(self, base_lr, weight_decay, momentum, batch_size, epoches, gpu_frac):
+        gpu_options = tf.ConfigProto(gpu_options=tf.GPUOptions(per_process_gpu_memory_fraction=gpu_frac))
         self.sess = tf.Session(config=gpu_options)
         x,gt,y,c,id_of_image,iterator_train = self.data.next_batch(category="train",batch_size=batch_size,epoches=-1)
         self.build()
@@ -364,14 +379,45 @@ class SEC():
             end_time = time.time()
             print("end_time:%f" % end_time)
             print("duration time:%f" %  (end_time-start_time))
+    def inference(self, gpu_frac, eps=1e-5):
+        if not os.path.exists(PRED_PATH): os.makedirs(PRED_PATH)
+        #Dump the predicted mask as numpy array to disk
+        gpu_options = tf.ConfigProto(gpu_options=tf.GPUOptions(per_process_gpu_memory_fraction=gpu_frac))
+        self.sess = tf.Session(config=gpu_options)
+        x, gt, _, _, id_of_image, iterator_train = self.data.next_batch(category="train",batch_size=1,epoches=-1)
+        self.build()
+        self.saver["norm"] = tf.train.Saver(max_to_keep=2,var_list=self.trainable_list)
+        with self.sess.as_default():
+            self.sess.run(tf.global_variables_initializer())
+            self.sess.run(tf.local_variables_initializer())
+            self.sess.run(iterator_train.initializer)
+            if self.config.get("model_path",False) is not False: self.restore_from_model(self.saver["norm"], self.config.get("model_path"), checkpoint=False)
+            epoch, i, iterations_per_epoch_train = 0.0, 0, self.data.get_data_len()
+            while epoch < 1:
+                data_x, data_gt, img_id = self.sess.run([x, gt, id_of_image])
+                cimg_id = img_id[0].decode("utf-8")
+                preds = self.sess.run(self.net["fc8-softmax"], feed_dict={self.net["input"]:data_x, self.net["drop_prob"]:0.5})
+                for pred in preds:
+                    img = Image.open("data/VOCdevkit/VOC2012/JPEGImages/{}.jpg".format(cimg_id)).resize((321,321), Image.ANTIALIAS)
+                    scores_exp = np.exp(pred-np.max(pred, axis=2, keepdims=True))
+                    probs = scores_exp/np.sum(scores_exp, axis=2, keepdims=True)
+                    probs = nd.zoom(probs, (321/probs.shape[0], 321/probs.shape[1], 1.0), order=1)
+                    probs[probs<eps] = eps
+                    mask = np.argmax(probs, axis=2)
+                    cPickle.dump(mask, open('{}/{}.pkl'.format(PRED_PATH, img_id[0].decode("utf-8")), 'wb'))
+                i+=1
+                epoch = i/iterations_per_epoch_train
+
 
 if __name__ == "__main__":
-    batch_size = 4 # the actual batch size is  batch_size * accum_num
-    input_size = (321,321)
-    category_num = 21
-    epoches = 30
-    data = dataset({"batch_size":batch_size,"input_size":input_size,"epoches":epoches,"category_num":category_num,"categorys":["train"]})
-    #sec = SEC({"data":data,"batch_size":batch_size,"input_size":input_size,"epoches":epoches,"category_num":category_num,"init_model_path":"./model/init.npy","accum_num":16})
-    sec = SEC({"data":data,"batch_size":batch_size,"input_size":input_size,"epoches":epoches,"category_num":category_num,"model_path":"{}/norm-56999".format(SAVER_PATH),"accum_num":16,"lr_path":"{}/lr-0.000100-52900".format(SAVER_PATH)}) # this for continuing train after interupting
-
-    sec.train(base_lr=1e-3,weight_decay=5e-5,momentum=0.9,batch_size=batch_size,epoches=epoches)
+    opt = parse_arg()
+    os.environ["CUDA_VISIBLE_DEVICES"] = opt.gpu_id
+    batch_size = 1 # actual batch size=batch_size*accum_num
+    input_size, category_num, epoches = (321,321), 21, 30
+    data = dataset({"batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "categorys":["train"]})
+    if opt.restore_iter_id == None: sec = SEC({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "init_model_path":"./model/init.npy", "accum_num":16})
+    else: sec = SEC({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "model_path":"{}/norm-{}".format(SAVER_PATH, opt.restore_iter_id), "accum_num":16})
+    if opt.action == 'train':
+        sec.train(base_lr=1e-3, weight_decay=5e-5, momentum=0.9, batch_size=batch_size, epoches=epoches, gpu_frac=float(opt.gpu_frac))
+    elif opt.action == 'inference':
+        sec.inference(gpu_frac=float(opt.gpu_frac))
