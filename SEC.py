@@ -366,9 +366,7 @@ class SEC():
                     _ = self.sess.run(self.net["accum_gradient_clean"])
                 if i%500 == 0:
                     l1,l2,l3,seed_l,expand_l,constrain_l,loss,lr = self.sess.run([self.loss_1,self.loss_2,self.loss_3,self.loss["seed"],self.loss["expand"],self.loss["constrain"],self.loss["total"],self.net["lr"]],feed_dict=params)
-                    print("epoch:%f, iteration:%f, lr:%f, loss:%f" % (epoch,i,lr,loss))
-                    print("seed_loss:%f,expand_loss:%f,constrain_loss:%f" % (seed_l,expand_l,constrain_l))
-                    print("l1:%f l2:%f l3:%f" % (l1,l2,l3))
+                    print("{:.1f}th epoch, {}iters, lr={:.5f}, loss={:.5f}+{:.5f}+{:.5f}={:.5f}".format(epoch,i,lr,seed_l,expand_l,constrain_l,loss))
 
                 if i%3000 == 2999:
                     self.saver["norm"].save(self.sess,os.path.join(self.config.get("saver_path",SAVER_PATH),"norm"),global_step=i)
