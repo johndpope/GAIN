@@ -302,7 +302,7 @@ if __name__ == "__main__":
     opt = parse_arg()
     os.environ["CUDA_VISIBLE_DEVICES"] = opt.gpu_id
     batch_size = 1 # actual batch size=batch_size*accum_num
-    input_size, category_num, epoches = (321,321), 21, 30
+    input_size, category_num, epoches = (321,321), 21, 10
     data = dataset({"batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "categorys":["train"]})
     if opt.restore_iter_id == None: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "init_model_path":"./model/init.npy", "accum_num":16})
     else: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "model_path":"{}/norm-{}".format(SAVER_PATH, opt.restore_iter_id), "accum_num":16})
