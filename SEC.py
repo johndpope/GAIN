@@ -287,6 +287,13 @@ class SEC():
         probs_smooth = tf.exp(crf)
         loss = tf.reduce_mean(tf.reduce_sum(probs_smooth * tf.log(probs_smooth/softmax), axis=3))
         return loss
+    
+    def add_loss_summary(self):
+        tf.summary.scalar('sec-loss', self.loss["norm"])
+        tf.summary.scalar('l2', self.loss["total"]-self.loss["norm"])
+        tf.summary.scalar('total', self.loss["total"])
+        self.merged = tf.summary.merge_all()
+        self.writer = tf.summary.FileWriter(os.path.join(SAVER_PATH, 'sum'))
 
     def optimize(self,base_lr,momentum,weight_decay):
         self.loss["norm"] = self.getloss()
@@ -322,6 +329,7 @@ class SEC():
         self.saver["norm"] = tf.train.Saver(max_to_keep=2,var_list=self.trainable_list)
         self.saver["lr"] = tf.train.Saver(var_list=self.trainable_list)
         self.saver["best"] = tf.train.Saver(var_list=self.trainable_list,max_to_keep=2)
+        self.add_loss_summary()
 
         with self.sess.as_default():
             self.sess.run(tf.global_variables_initializer())
@@ -365,7 +373,8 @@ class SEC():
                     _ = self.sess.run(self.net["accum_gradient_update"])
                     _ = self.sess.run(self.net["accum_gradient_clean"])
                 if i%500 == 0:
-                    l1,l2,l3,seed_l,expand_l,constrain_l,loss,lr = self.sess.run([self.loss_1,self.loss_2,self.loss_3,self.loss["seed"],self.loss["expand"],self.loss["constrain"],self.loss["total"],self.net["lr"]],feed_dict=params)
+                    summary, l1,l2,l3,seed_l,expand_l,constrain_l,loss,lr = self.sess.run([self.merged, self.loss_1,self.loss_2,self.loss_3,self.loss["seed"],self.loss["expand"],self.loss["constrain"],self.loss["total"],self.net["lr"]],feed_dict=params)
+                    self.writer.add_summary(summary, global_step=i)
                     print("{:.1f}th epoch, {}iters, lr={:.5f}, loss={:.5f}+{:.5f}+{:.5f}={:.5f}".format(epoch,i,lr,seed_l,expand_l,constrain_l,loss))
 
                 if i%3000 == 2999:

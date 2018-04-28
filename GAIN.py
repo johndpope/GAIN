@@ -198,6 +198,14 @@ class GAIN():
     def get_am_loss(self):
         w, h = int((self.cw+7)/8), int((self.ch+7)/8)
         return tf.reduce_mean(tf.reduce_sum(tf.reshape(self.net["input_c-fc8-softmax"], (-1,(category_num)*(category_num)*w*h)), axis=1)/tf.cast(tf.reduce_sum(self.net["label"], axis=1), tf.float32))
+    
+    def add_loss_summary(self):
+        tf.summary.scalar('cl-loss', self.loss["loss_cl"])
+        tf.summary.scalar('am-loss', self.loss["loss_am"])
+        tf.summary.scalar('l2', self.loss["total"]-self.loss["norm"])
+        tf.summary.scalar('total', self.loss["total"])
+        self.merged = tf.summary.merge_all()
+        self.writer = tf.summary.FileWriter(os.path.join(SAVER_PATH, 'sum'))
 
     def optimize(self, base_lr, momentum, weight_decay):
         self.loss["loss_cl"] = self.get_cl_loss()
@@ -232,6 +240,7 @@ class GAIN():
         self.saver["norm"] = tf.train.Saver(max_to_keep=2,var_list=self.trainable_list)
         self.saver["lr"] = tf.train.Saver(var_list=self.trainable_list)
         self.saver["best"] = tf.train.Saver(var_list=self.trainable_list,max_to_keep=2)
+        self.add_loss_summary()
 
         with self.sess.as_default():
             self.sess.run(tf.global_variables_initializer())
@@ -260,8 +269,9 @@ class GAIN():
                 if i % self.accum_num == self.accum_num-1:
                     _, _ = self.sess.run(self.net["accum_gradient_update"]), self.sess.run(self.net["accum_gradient_clean"])
                 if i%500 == 0:
-                    loss_cl, loss_am, loss_l2, loss_total, lr = self.sess.run([self.loss["loss_cl"], self.loss["loss_am"], self.loss["l2"], self.loss["total"], self.net["lr"]], feed_dict=params)
+                    summary, loss_cl, loss_am, loss_l2, loss_total, lr = self.sess.run([self.merged, self.loss["loss_cl"], self.loss["loss_am"], self.loss["l2"], self.loss["total"], self.net["lr"]], feed_dict=params)
                     print("{:.1f}th epoch, {}iters, lr={:.5f}, loss={:.5f}+{:.5f}+{:.5f}={:.5f}".format(epoch, i, lr, loss_cl, loss_am, weight_decay*loss_l2, loss_total))
+                    self.writer.add_summary(summary, global_step=i)
                 if i%3000 == 2999:
                     self.saver["norm"].save(self.sess, os.path.join(self.config.get("saver_path",SAVER_PATH),"norm"), global_step=i)
                 i+=1
