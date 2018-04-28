@@ -1,5 +1,7 @@
-python3 SEC.py -g 0 -f 0.1
+python3 SEC.py -g 0 -f 0.06
+python3 SEC.py -g 0 -f 0.05 -r 104999 -a inference
 python3 GAIN.py -g 0 -f 0.45
+python3 SEC.py -g 0 -f 0.05 -r 104999 -a inference
 
 # tensorboard
 export LC_ALL="en_US.UTF-8"
