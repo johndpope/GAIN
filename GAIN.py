@@ -197,7 +197,7 @@ class GAIN():
     
     def get_am_loss(self):
         w, h = int((self.cw+7)/8), int((self.ch+7)/8)
-        return tf.reduce_mean(tf.reduce_sum(tf.reshape(self.net["input_c-fc8-softmax"], (-1,(category_num)*(category_num)*w*h)), axis=1)/tf.cast(tf.reduce_sum(self.net["label"], axis=1), tf.float32))
+        return tf.reduce_mean(tf.reduce_sum(tf.stack([tf.reshape(tf.reduce_sum(tf.reshape(self.net["input_c-fc8-softmax"], (-1, category_num, w*h, category_num))[:,i,:,i], axis=1), (-1,1)) for i in range(category_num)], axis=2), axis=2) / tf.cast(tf.reduce_sum(self.net["label"], axis=1), tf.float32))
     
     def add_loss_summary(self):
         tf.summary.scalar('cl-loss', self.loss["loss_cl"])
