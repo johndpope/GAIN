@@ -130,6 +130,11 @@ class GAIN():
         self.net["crf"] = tf.py_func(crf, [self.net[featemap_layer], tf.image.resize_bilinear(self.net[img_layer]+self.data.img_mean, (41,41))],tf.float32) # shape [N, h, w, C]
         return "crf"
     def build_input_c(self, att_layer, img_layer):
+        """Generate the image complement.
+        ------------------------------------------------------------------------
+        Given the image I[w,h,3], attention map A[w/8,h/8,#class],
+            the image complement I^{*c} of the c-th class = I-I*resize(A[:,:,c])
+        """
         image, atts = tf.image.resize_bilinear(self.net[img_layer], (self.cw,self.ch)), tf.image.resize_bilinear(self.net[att_layer], (self.cw,self.ch))
         layer = "input_c"
         rst = []
@@ -178,6 +183,7 @@ class GAIN():
         return weights, bias
 
     def get_cl_loss(self):
+        """SEC training loss (directly taken from xtudbxk's implementation for SEC[ECCV'16])"""
         # seed
         seed_loss = -tf.reduce_mean(tf.reduce_sum(self.net["cues"]*tf.log(self.net["fc8-softmax"]), axis=(1,2,3), keepdims=True)/tf.reduce_sum(self.net["cues"],axis=(1,2,3), keepdims=True))
         # expand
@@ -196,8 +202,15 @@ class GAIN():
         return loss
     
     def get_am_loss(self):
+        """
+        Implementation of Attention Mining Loss described in GAIN
+        ---------------------------------------------------------
+        return the sum of class scores given the complement image `input_c`
+        """
         w, h = int((self.cw+7)/8), int((self.ch+7)/8)
-        return tf.reduce_mean(tf.reduce_sum(tf.stack([tf.reshape(tf.reduce_sum(tf.reshape(self.net["input_c-fc8-softmax"], (-1, category_num, w*h, category_num))[:,i,:,i], axis=1), (-1,1)) for i in range(category_num)], axis=2), axis=2) / tf.cast(tf.reduce_sum(self.net["label"], axis=1), tf.float32))
+        # convert pixel-level to image-level prediction of class labels
+        agg = tf.stack([tf.reshape(tf.reduce_max(tf.reshape(self.net["input_c-fc8-softmax"], (-1, category_num, w*h, category_num))[:,i,:,i], axis=1), (-1,1)) for i in range(category_num)], axis=2)
+        return tf.reduce_mean(tf.reduce_sum(agg, axis=2) / tf.cast(tf.reduce_sum(self.net["label"], axis=1), tf.float32))
     
     def add_loss_summary(self):
         tf.summary.scalar('cl-loss', self.loss["loss_cl"])
