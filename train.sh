@@ -1,6 +1,6 @@
 python3 SEC.py -g 0 -f 0.06
 python3 SEC.py -g 0 -f 0.05 -r 104999 -a inference
-python3 GAIN.py -g 0 -f 0.45
+python3 GAIN-SEC.py -g 0 -f 0.45
 python3 SEC.py -g 0 -f 0.05 -r 104999 -a inference
 
 # tensorboard
