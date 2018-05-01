@@ -14,8 +14,7 @@ from crf import crf_inference
 GAIN-SEC
 ----------------------
 This code implements the model described in the experiment section of GAIN(https://arxiv.org/pdf/1802.10171.pdf)
- * model that generates attention map is SEC(ECCV'16) - the current state-of-the-art Weakly-Supervised Segmentation model
-    However, as described in GAIN, it could be any model, such as CAM(CVPR'16) or Grad-CAM(ICCV'17).
+ * Segmentation model: SEC(ECCV'16)
 """
 
 SAVER_PATH, PRED_PATH = "gain-saver", "gain-preds"
