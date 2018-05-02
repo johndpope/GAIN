@@ -135,7 +135,7 @@ class GAIN():
             return ret.astype(np.float32)
         self.net["crf"] = tf.py_func(crf, [self.net[featemap_layer], tf.image.resize_bilinear(self.net[img_layer]+self.data.img_mean, (41,41))],tf.float32) # shape [N, h, w, C]
         return "crf"
-    def build_input_c(self, att_layer, img_layer):
+    def build_input_c(self, att_layer, img_layer, w=10, th=0.5):
         """Generate the image complement.
         ------------------------------------------------------------------------
         Given the image I[w,h,3], attention map A[w/8,h/8,#class],
@@ -145,7 +145,9 @@ class GAIN():
         layer = "input_c"
         rst = []
         for att in tf.unstack(atts, axis=3):
-            rst.append(tf.expand_dims(image-tf.reshape(tf.multiply(tf.reshape(image, (-1,3)), tf.reshape(att, (-1,1))), (-1,self.cw,self.ch,3)), axis=1))
+            c = tf.expand_dims(image-tf.reshape(tf.multiply(tf.reshape(image, (-1,3)), tf.reshape(att, (-1,1))), (-1,self.cw,self.ch,3)), axis=1)
+            c = tf.nn.sigmoid(w*(c-th)) # threshold masking
+            rst.append(c)
         x = tf.stack(rst, axis=1)
         image_c = tf.reshape(x, (-1,self.cw,self.ch,3))
         self.net[layer] = image_c
