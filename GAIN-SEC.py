@@ -15,6 +15,7 @@ GAIN-SEC
 ----------------------
 This code implements the model described in the experiment section of GAIN(https://arxiv.org/pdf/1802.10171.pdf)
  * Segmentation model: SEC(ECCV'16)
+ * Base model: DeepLab-CRF-LargeFOV(ICLR'15)
 """
 
 SAVER_PATH, PRED_PATH = "gain-saver", "gain-preds"
@@ -31,7 +32,9 @@ def parse_arg():
 class GAIN():
     def __init__(self,config):
         self.config = config
+        # size of image(`input`)
         self.h, self.w = self.config.get("input_size", (321,321))
+        # size of complement image(`input_c`)
         self.cw, self.ch = 321,321
         self.category_num, self.accum_num = self.config.get("category_num",21), self.config.get("accum_num",1)
         self.data, self.min_prob = self.config.get("data",None), self.config.get("min_prob",0.0001)
@@ -51,6 +54,7 @@ class GAIN():
         return self.net["output"]
     def create_network(self):
         if "init_model_path" in self.config: self.load_init_model()
+        # path of `input` to DeepLab
         with tf.name_scope("deeplab") as scope:
             block = self.build_block("input", ["conv1_1","relu1_1","conv1_2","relu1_2","pool1",
                                               "conv2_1","relu2_1","conv2_2","relu2_2","pool2",
@@ -59,7 +63,9 @@ class GAIN():
                                               "conv5_1","relu5_1","conv5_2","relu5_2","conv5_3","relu5_3","pool5","pool5a"])
             fc = self.build_fc(block, ["fc6","relu6","drop6","fc7","relu7","drop7","fc8"])
         with tf.name_scope("sec") as scope:
-            softmax, crf = self.build_sp_softmax(fc), self.build_crf(fc,"input")
+            softmax = self.build_sp_softmax(fc) # SEC: `fc8-softmax` is our attention map
+            crf = self.build_crf(fc,"input") # SEC: remove discontiouous by CRF
+        # path of `input_c` to DeepLab
         with tf.name_scope("am") as scope:
             with tf.variable_scope(tf.get_variable_scope().name, reuse=tf.AUTO_REUSE) as var_scope:
                 var_scope.reuse_variables()
@@ -113,7 +119,7 @@ class GAIN():
                 else: raise Exception("Unimplemented layer: {}".format(layer))
                 last_layer = player
         return last_layer
-    def build_sp_softmax(self, last_layer, is_exist=False):
+    def build_sp_softmax(self, last_layer, is_exist=False): # SEC
         layer = "fc8-softmax"
         player = '-'.join([last_layer.split('-')[0], layer]) if is_exist else layer
         preds_max = tf.reduce_max(self.net[last_layer], axis=3, keepdims=True)
@@ -121,7 +127,7 @@ class GAIN():
         self.net[player] = preds_exp/tf.reduce_sum(preds_exp,axis=3, keepdims=True) + self.min_prob
         self.net[player] = self.net[player]/tf.reduce_sum(self.net[player], axis=3, keepdims=True)
         return player
-    def build_crf(self, featemap_layer, img_layer):
+    def build_crf(self, featemap_layer, img_layer): # SEC
         def crf(featemap, image):
             crf_config = {"g_sxy":3/12,"g_compat":3,"bi_sxy":80/12,"bi_srgb":13,"bi_compat":10,"iterations":5}
             batch_size = featemap.shape[0]
@@ -136,10 +142,11 @@ class GAIN():
         self.net["crf"] = tf.py_func(crf, [self.net[featemap_layer], tf.image.resize_bilinear(self.net[img_layer]+self.data.img_mean, (41,41))],tf.float32) # shape [N, h, w, C]
         return "crf"
     def build_input_c(self, att_layer, img_layer, w=10, th=0.5):
-        """Generate the image complement.
+        """
+        Generate the image complement.
         ------------------------------------------------------------------------
-        Given the image I[w,h,3], attention map A[w/8,h/8,#class],
-            the image complement I^{*c} of the c-th class = I-I*resize(A[:,:,c])
+        Input: image I[w,h,3], attention map A[w/8,h/8,#class],
+        return: image complement I[w,h,#class], where I[:,:,c] = I[:,:,c]-I[:,:,c]*resize(A[:,:,c])
         """
         image, atts = tf.image.resize_bilinear(self.net[img_layer], (self.cw,self.ch)), tf.image.resize_bilinear(self.net[att_layer], (self.cw,self.ch))
         layer = "input_c"
@@ -217,7 +224,7 @@ class GAIN():
         """
         w, h = int((self.cw+7)/8), int((self.ch+7)/8)
         # convert pixel-level to image-level prediction of class labels
-        agg = tf.stack([tf.reshape(tf.reduce_max(tf.reshape(self.net["input_c-fc8-softmax"], (-1, category_num, w*h, category_num))[:,i,:,i], axis=1), (-1,1)) for i in range(category_num)], axis=2)
+        agg = tf.stack([tf.reshape(tf.reduce_max(tf.reshape(self.net["input_c-fc8-softmax"], (-1, self.category_num, w*h, self.category_num))[:,i,:,i], axis=1), (-1,1)) for i in range(self.category_num)], axis=2)
         return tf.reduce_mean(tf.reduce_sum(agg, axis=2) / tf.cast(tf.reduce_sum(self.net["label"], axis=1), tf.float32))
     
     def add_loss_summary(self):
