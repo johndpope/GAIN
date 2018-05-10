@@ -18,7 +18,7 @@ This code implements the model described in the experiment section of GAIN(https
  * Base model: DeepLab-CRF-LargeFOV(ICLR'15)
 """
 
-SAVER_PATH, PRED_PATH = "gain-saver", "gain-preds"
+SAVER_PATH, PRED_PATH = "gain_sec-saver", "gain_sec-preds"
 
 def parse_arg():
     parser = optparse.OptionParser()
@@ -56,11 +56,11 @@ class GAIN():
         if "init_model_path" in self.config: self.load_init_model()
         # path of `input` to DeepLab
         with tf.name_scope("deeplab") as scope:
-            block = self.build_block("input", ["conv1_1","relu1_1","conv1_2","relu1_2","pool1",
-                                              "conv2_1","relu2_1","conv2_2","relu2_2","pool2",
-                                              "conv3_1","relu3_1","conv3_2","relu3_2","conv3_3","relu3_3","pool3",
-                                              "conv4_1","relu4_1","conv4_2","relu4_2","conv4_3","relu4_3","pool4",
-                                              "conv5_1","relu5_1","conv5_2","relu5_2","conv5_3","relu5_3","pool5","pool5a"])
+            block = self.build_block("input", [
+                    "conv1_1","relu1_1","conv1_2","relu1_2","pool1", "conv2_1","relu2_1","conv2_2","relu2_2","pool2",
+                    "conv3_1","relu3_1","conv3_2","relu3_2","conv3_3","relu3_3","pool3",
+                    "conv4_1","relu4_1","conv4_2","relu4_2","conv4_3","relu4_3","pool4",
+                    "conv5_1","relu5_1","conv5_2","relu5_2","conv5_3","relu5_3","pool5","pool5a"])
             fc = self.build_fc(block, ["fc6","relu6","drop6","fc7","relu7","drop7","fc8"])
         with tf.name_scope("sec") as scope:
             softmax = self.build_sp_softmax(fc) # SEC: `fc8-softmax` is our attention map
@@ -70,11 +70,11 @@ class GAIN():
             with tf.variable_scope(tf.get_variable_scope().name, reuse=tf.AUTO_REUSE) as var_scope:
                 var_scope.reuse_variables()
                 input_c = self.build_input_c("fc8-softmax", "input")
-                block = self.build_block(input_c, ["conv1_1","relu1_1","conv1_2","relu1_2","pool1",
-                                                   "conv2_1","relu2_1","conv2_2","relu2_2","pool2",
-                                                   "conv3_1","relu3_1","conv3_2","relu3_2","conv3_3","relu3_3","pool3",
-                                                   "conv4_1","relu4_1","conv4_2","relu4_2","conv4_3","relu4_3","pool4",
-                                                   "conv5_1","relu5_1","conv5_2","relu5_2","conv5_3","relu5_3","pool5","pool5a"], is_exist=True)
+                block = self.build_block(input_c, [
+                        "conv1_1","relu1_1","conv1_2","relu1_2","pool1", "conv2_1","relu2_1","conv2_2","relu2_2","pool2",
+                        "conv3_1","relu3_1","conv3_2","relu3_2","conv3_3","relu3_3","pool3",
+                        "conv4_1","relu4_1","conv4_2","relu4_2","conv4_3","relu4_3","pool4",
+                        "conv5_1","relu5_1","conv5_2","relu5_2","conv5_3","relu5_3","pool5","pool5a"], is_exist=True)
                 fc = self.build_fc(block, ["fc6","relu6","drop6","fc7","relu7","drop7","fc8"], is_exist=True)
                 softmax = self.build_sp_softmax(fc, is_exist=True)
         return self.net[crf]
@@ -133,8 +133,7 @@ class GAIN():
             batch_size = featemap.shape[0]
             image = image.astype(np.uint8)
             ret = np.zeros(featemap.shape,dtype=np.float32)
-            for i in range(batch_size):
-                ret[i,:,:,:] = crf_inference(featemap[i], image[i], crf_config, self.category_num)
+            for i in range(batch_size): ret[i,:,:,:] = crf_inference(featemap[i], image[i], crf_config, self.category_num)
             ret[ret<self.min_prob] = self.min_prob
             ret /= np.sum(ret,axis=3, keepdims=True)
             ret = np.log(ret)

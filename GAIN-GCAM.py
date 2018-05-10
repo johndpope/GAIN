@@ -38,7 +38,7 @@ class GAIN():
         self.category_num, self.accum_num = self.config.get("category_num",21), self.config.get("accum_num",1)
         self.data, self.min_prob = self.config.get("data",None), self.config.get("min_prob",0.0001)
         self.net, self.loss, self.saver, self.weights, self.stride = {}, {}, {}, {}, {}
-        self.trainable_list, self.lr_1_list, self.lr_2_list, self.lr_10_list, self.lr_20_list = [], [], [], [], []
+        self.trainable_list, self.lr_1_list, self.lr_2_list, self.lr_4_list, self.lr_8_list = [], [], [], [], []
         self.stride["input"] = 1
         self.stride["input_c"] = 1
 
@@ -189,8 +189,8 @@ class GAIN():
             self.lr_1_list.append(weights)
             self.lr_2_list.append(bias)
         else: # the lr is larger in the last layer
-            self.lr_10_list.append(weights)
-            self.lr_20_list.append(bias)
+            self.lr_4_list.append(weights)
+            self.lr_8_list.append(bias)
         self.trainable_list.append(weights)
         self.trainable_list.append(bias)
         return weights, bias
@@ -222,7 +222,7 @@ class GAIN():
         self.loss["l2"] = tf.reduce_sum([tf.nn.l2_loss(self.weights[layer][0]) for layer in self.weights], axis=0)
         self.loss["total"] = self.loss["norm"] + weight_decay*self.loss["l2"]
         self.net["lr"] = tf.Variable(base_lr, trainable=False, dtype=tf.float32)
-        opt = tf.train.MomentumOptimizer(self.net["lr"],momentum)
+        opt = tf.train.AdamOptimizer(self.net["lr"],momentum)
         gradients = opt.compute_gradients(self.loss["total"],var_list=self.trainable_list)
         self.grad = {}
         self.net["accum_gradient"] = []
@@ -230,8 +230,8 @@ class GAIN():
         new_gradients = []
         for (g,v) in gradients:
             if v in self.lr_2_list: g = 2*g
-            if v in self.lr_10_list: g = 10*g
-            if v in self.lr_20_list: g = 20*g
+            if v in self.lr_4_list: g = 4*g
+            if v in self.lr_8_list: g = 8*g
             self.net["accum_gradient"].append(tf.Variable(tf.zeros_like(g),trainable=False))
             self.net["accum_gradient_accum"].append(self.net["accum_gradient"][-1].assign_add(g/self.accum_num, use_locking=True))
             new_gradients.append((self.net["accum_gradient"][-1],v))
@@ -325,6 +325,6 @@ if __name__ == "__main__":
     if opt.restore_iter_id == None: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "init_model_path":"./model/init.npy", "accum_num":16})
     else: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "model_path":"{}/norm-{}".format(SAVER_PATH, opt.restore_iter_id), "accum_num":16})
     if opt.action == 'train':
-        gain.train(base_lr=1e-3, weight_decay=5e-5, momentum=0.9, batch_size=batch_size, epoches=epoches, gpu_frac=float(opt.gpu_frac))
+        gain.train(base_lr=1e-4, weight_decay=5e-5, momentum=0.9, batch_size=batch_size, epoches=epoches, gpu_frac=float(opt.gpu_frac))
     elif opt.action == 'inference':
         gain.inference(gpu_frac=float(opt.gpu_frac))
