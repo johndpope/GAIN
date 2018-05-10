@@ -55,11 +55,11 @@ class GAIN():
         if "init_model_path" in self.config: self.load_init_model()
         # path of `input` to VGG16
         with tf.name_scope("vgg16") as scope:
-            block = self.build_block("input", ["conv1_1","relu1_1","conv1_2","relu1_2","pool1",
-                                              "conv2_1","relu2_1","conv2_2","relu2_2","pool2",
-                                              "conv3_1","relu3_1","conv3_2","relu3_2","conv3_3","relu3_3","pool3",
-                                              "conv4_1","relu4_1","conv4_2","relu4_2","conv4_3","relu4_3","pool4",
-                                              "conv5_1","relu5_1","conv5_2","relu5_2","conv5_3","relu5_3","pool5"])
+            block = self.build_block("input", [
+                "conv1_1","relu1_1","conv1_2","relu1_2","pool1","conv2_1","relu2_1","conv2_2","relu2_2","pool2",
+                "conv3_1","relu3_1","conv3_2","relu3_2","conv3_3","relu3_3","pool3",
+                "conv4_1","relu4_1","conv4_2","relu4_2","conv4_3","relu4_3","pool4",
+                "conv5_1","relu5_1","conv5_2","relu5_2","conv5_3","relu5_3","pool5"])
             last_layer = self.build_fc(block, ["fc6","relu6","drop6","fc7","relu7","drop7"])
             self.net[last_layer] = tf.reduce_sum(self.net[last_layer], axis=(1,2))
             fc = self.build_fc(last_layer, ["fc8"])
@@ -71,11 +71,11 @@ class GAIN():
                 var_scope.reuse_variables()
                 # generate `input_c`, which is the complement part of the image not selected by the attention map
                 input_c = self.build_input_c("gcam", "input")
-                block = self.build_block(input_c, ["conv1_1","relu1_1","conv1_2","relu1_2","pool1",
-                                                   "conv2_1","relu2_1","conv2_2","relu2_2","pool2",
-                                                   "conv3_1","relu3_1","conv3_2","relu3_2","conv3_3","relu3_3","pool3",
-                                                   "conv4_1","relu4_1","conv4_2","relu4_2","conv4_3","relu4_3","pool4",
-                                                   "conv5_1","relu5_1","conv5_2","relu5_2","conv5_3","relu5_3","pool5"], is_exist=True)
+                block = self.build_block(input_c, [
+                    "conv1_1","relu1_1","conv1_2","relu1_2","pool1","conv2_1","relu2_1","conv2_2","relu2_2","pool2",
+                    "conv3_1","relu3_1","conv3_2","relu3_2","conv3_3","relu3_3","pool3",
+                    "conv4_1","relu4_1","conv4_2","relu4_2","conv4_3","relu4_3","pool4",
+                    "conv5_1","relu5_1","conv5_2","relu5_2","conv5_3","relu5_3","pool5"], is_exist=True)
                 last_layer = self.build_fc(block, ["fc6","relu6","drop6","fc7","relu7","drop7"], is_exist=True)
                 self.net[last_layer] = tf.reduce_sum(self.net[last_layer], axis=(1,2))
                 fc = self.build_fc(last_layer, ["fc8"], is_exist=True)
@@ -132,6 +132,8 @@ class GAIN():
         for c in range(self.category_num):
             # calculate the importance of each feature map
             alpha = tf.reduce_sum(tf.gradients(Y[:,c], A)[0], axis=(1,2))
+            # normalize alpha
+            alpha = alpha/tf.reduce_sum(alpha, axis=(0,1))
             # linear combine the feature map to generate CAM
             cam_c = tf.reduce_sum(tf.reshape(tf.reshape(alpha, (-1,1))*tf.reshape(tf.transpose(A, [0,3,1,2]), (-1,41*41)), (-1,512,41*41)), axis=1)
             cams.append(tf.nn.relu(cam_c))
