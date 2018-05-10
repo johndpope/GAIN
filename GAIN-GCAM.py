@@ -8,7 +8,6 @@ from PIL import Image
 import tensorflow as tf
 import optparse
 from dataset import dataset
-from crf import crf_inference
 
 """
 GAIN-GCAM
