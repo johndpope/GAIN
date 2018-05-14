@@ -15,6 +15,7 @@ GAIN-SEC
 ----------------------
 This code implements the model described in the experiment section of GAIN(https://arxiv.org/pdf/1802.10171.pdf)
  * Segmentation model: SEC(ECCV'16)
+  (+) the `GlobalWeightedRankingPooling` layer is separated from the `expand_loss` of [xtudbxk]'s implementation
  * Base model: DeepLab-CRF-LargeFOV(ICLR'15)
 """
 
@@ -41,6 +42,7 @@ class GAIN():
         self.trainable_list, self.lr_1_list, self.lr_2_list, self.lr_10_list, self.lr_20_list = [], [], [], [], []
         self.stride["input"] = 1
         self.stride["input_c"] = 1
+        self.agg_w, self.agg_w_bg = np.reshape(np.array([0.996**i for i in range(41*41 -1, -1, -1)]),(1,-1,1)), np.reshape(np.array([0.999**i for i in range(41*41 -1, -1, -1)]),(1,-1))
 
     def build(self):
         if "output" not in self.net:
@@ -64,7 +66,8 @@ class GAIN():
         with tf.name_scope("sec") as scope:
             softmax = self.build_sp_softmax(fc) # SEC: `fc8-softmax` is our attention map
             # SEC: remove discontiouous by CRF
-            out = self.build_crf(fc,"input") if self.with_crf else softmax
+            out = self.build_aggregate(softmax) # SEC: aggregate prediction to image-level by Global Weighted Ranking Pooling
+            out = self.build_crf(fc,"input") if self.with_crf else out
         # path of `input_c` to DeepLab
         with tf.name_scope("am") as scope:
             with tf.variable_scope(tf.get_variable_scope().name, reuse=tf.AUTO_REUSE) as var_scope:
@@ -77,6 +80,7 @@ class GAIN():
                         "conv5_1","relu5_1","conv5_2","relu5_2","conv5_3","relu5_3","pool5","pool5a"], is_exist=True)
                 fc = self.build_fc(block, ["fc6","relu6","drop6","fc7","relu7","drop7","fc8"], is_exist=True)
                 softmax = self.build_sp_softmax(fc, is_exist=True)
+                out = self.build_aggregate(softmax, is_exist=True)
         return self.net[out]
     def build_block(self, last_layer, layer_lists, is_exist=False):
         input_layer = last_layer
@@ -140,6 +144,15 @@ class GAIN():
             return ret.astype(np.float32)
         self.net["crf"] = tf.py_func(crf, [self.net[featemap_layer], tf.image.resize_bilinear(self.net[img_layer]+self.data.img_mean, (41,41))],tf.float32) # shape [N, h, w, C]
         return "crf"
+    def build_aggregate(self, mask_layer, is_exist=False):
+        layer = "gwrp"
+        player = '-'.join([mask_layer.split('-')[0], layer]) if is_exist else layer
+        probs_bg, probs = self.net[mask_layer][:,:,:,0], self.net[mask_layer][:,:,:,1:]
+        class_probs = tf.reduce_sum(tf.contrib.framework.sort(tf.reshape(probs,(-1,41*41,20)), axis=1)*self.agg_w/np.sum(self.agg_w), axis=1)
+        class_probs_bg = tf.reshape(tf.reduce_sum(tf.contrib.framework.sort(tf.reshape(probs_bg,(-1,41*41)), axis=1)*self.agg_w_bg/np.sum(self.agg_w_bg), axis=1), (-1,1))
+        class_preds = tf.concat([class_probs_bg, class_probs], axis=1)
+        self.net[player] = class_preds
+        return player
     def build_input_c(self, att_layer, img_layer, w=10, th=0.5):
         """
         Generate the image complement.
@@ -198,13 +211,8 @@ class GAIN():
 
     def get_cl_loss(self): # seed + expand
         """SEC training loss (directly taken from xtudbxk's implementation for SEC[ECCV'16])"""
-        seed_loss = -tf.reduce_mean(tf.reduce_sum(self.net["cues"]*tf.log(self.net["fc8-softmax"]), axis=(1,2,3), keepdims=True)/tf.reduce_sum(self.net["cues"],axis=(1,2,3), keepdims=True))
-        stat, probs_bg, probs = self.net["label"][:,1:], self.net["fc8-softmax"][:,:,:,0], self.net["fc8-softmax"][:,:,:,1:]
-        weights, weights_bg, stat_2d = np.reshape(np.array([0.996**i for i in range(41*41 -1, -1, -1)]),(1,-1,1)), np.reshape(np.array([0.999**i for i in range(41*41 -1, -1, -1)]),(1,-1)), tf.cast(tf.greater(stat, 0), tf.float32)
-        self.loss_1 = -tf.reduce_mean(tf.reduce_sum((stat_2d*tf.log(tf.reduce_sum((tf.contrib.framework.sort(tf.reshape(probs,(-1,41*41,20)), axis=1)*weights)/np.sum(weights), axis=1)) / tf.reduce_sum(stat_2d,axis=1,keepdims=True)), axis=1))
-        self.loss_2 = -tf.reduce_mean(tf.reduce_sum(((1-stat_2d)*tf.log(1-tf.reduce_max(probs,axis=(1,2))) / tf.reduce_sum((1-stat_2d),axis=1,keepdims=True)), axis=1))
-        self.loss_3 = -tf.reduce_mean(tf.log(tf.reduce_sum((tf.contrib.framework.sort(tf.reshape(probs_bg,(-1,41*41)), axis=1)*weights_bg)/np.sum(weights_bg), axis=1)))
-        expand_loss = self.loss_1+self.loss_2+self.loss_3
+        seed_loss = -tf.reduce_mean(tf.reduce_sum(self.net["cues"]*tf.log(self.net["fc8-softmax"]), axis=(1,2,3), keepdims=True)/tf.reduce_sum(self.net["cues"], axis=(1,2,3), keepdims=True))
+        expand_loss = tf.reduce_mean(tf.reduce_sum([tf.nn.sigmoid_cross_entropy_with_logits(logits=self.net["gwrp"][:,c], labels=tf.cast(tf.greater(self.net["label"][:,c], 0), tf.float32)) for c in range(self.category_num)]))
         self.loss["seed"] = seed_loss
         self.loss["expand"] = expand_loss
         return seed_loss+expand_loss
@@ -221,10 +229,8 @@ class GAIN():
         ---------------------------------------------------------
         return the sum of class scores given the complement image `input_c`
         """
-        w, h = int((self.cw+7)/8), int((self.ch+7)/8)
-        # convert pixel-level to image-level prediction of class labels
-        agg = tf.stack([tf.reshape(tf.reduce_max(tf.reshape(self.net["input_c-fc8-softmax"], (-1, self.category_num, w*h, self.category_num))[:,i,:,i], axis=1), (-1,1)) for i in range(self.category_num)], axis=2)
-        return tf.reduce_mean(tf.reduce_sum(agg, axis=2) / tf.cast(tf.reduce_sum(self.net["label"], axis=1), tf.float32))
+        class_sum = tf.reduce_sum(tf.concat([tf.reshape(tf.reshape(self.net["input_c-gwrp"], (-1, self.category_num, self.category_num))[:,i,i], (-1,1)) for i in range(self.category_num)], axis=1), axis=1)
+        return tf.reduce_mean(class_sum / tf.cast(tf.reduce_sum(self.net["label"], axis=1), tf.float32))
     
     def add_loss_summary(self):
         tf.summary.scalar('cl-loss', self.loss["loss_cl"])
