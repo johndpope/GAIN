@@ -35,26 +35,42 @@ class dataset():
             data_f[category] = {"img":[],"gt":[],"label":[],"id":[],"id_for_slice":[]}
             data_len[category] = 0
         for one in self.categorys:
-           assert one == "train", "extra category found!"
-           with open(os.path.join("data","input_list.txt"),"r") as f:
-               for line in f.readlines():
-                   line = line.rstrip("\n")
-                   id_name, id_identy = line.split(" ")
-                   id_name = id_name[:-4] # then id_name is like '2007_007028'
-                   data_f[one]["id"].append(id_name)
-                   data_f[one]["id_for_slice"].append(id_identy)
-                   data_f[one]["img"].append(os.path.join(self.main_path,"JPEGImages","%s.jpg" % id_name))
-                   data_f[one]["gt"].append(os.path.join(self.main_path,"SegmentationClassAug","%s.png" % id_name))
-               if "length" in self.config:
-                   length = self.config["length"]
-                   data_f[one]["id"] = data_f[one]["id"][:length]
-                   data_f[one]["id_for_slice"] = data_f[one]["id_for_slice"][:length]
-                   data_f[one]["img"] = data_f[one]["img"][:length]
-                   data_f[one]["gt"] = data_f[one]["gt"][:length]
-                   print("id:%s" % str(data_f[one]["id"]))
-                   print("img:%s" % str(data_f[one]["img"]))
-                   print("id_for_slice:%s" % str(data_f[one]["id_for_slice"]))
-           data_len[one] = len(data_f[one]["id"])
+            if "train" in one:
+                with open(os.path.join("data","train_id.txt"),"r") as f:
+                    for id_identy, line in enumerate(f.readlines()):
+                        id_name = line.strip("\n")
+                        data_f[one]["id"].append(id_name)
+                        data_f[one]["id_for_slice"].append(str(id_identy))
+                        data_f[one]["img"].append(os.path.join(self.main_path,"JPEGImages","%s.jpg" % id_name))
+                        data_f[one]["gt"].append(os.path.join(self.main_path,"SegmentationClassAug","%s.png" % id_name))
+                    if "length" in self.config:
+                        length = self.config["length"]
+                        data_f[one]["id"] = data_f[one]["id"][:length]
+                        data_f[one]["id_for_slice"] = data_f[one]["id_for_slice"][:length]
+                        data_f[one]["img"] = data_f[one]["img"][:length]
+                        data_f[one]["gt"] = data_f[one]["gt"][:length]
+                        print("id:%s" % str(data_f[one]["id"]))
+                        print("img:%s" % str(data_f[one]["img"]))
+                        print("id_for_slice:%s" % str(data_f[one]["id_for_slice"]))
+                data_len[one] = len(data_f[one]["id"])
+            if "val" in one:
+                with open(os.path.join("data","val_id.txt"),"r") as f:
+                    for id_identy, line in enumerate(f.readlines()):
+                        id_name = line.strip("\n")
+                        data_f[one]["id"].append(id_name)
+                        data_f[one]["id_for_slice"].append(str(id_identy))
+                        data_f[one]["img"].append(os.path.join(self.main_path,"JPEGImages","%s.jpg" % id_name))
+                        data_f[one]["gt"].append(os.path.join(self.main_path,"SegmentationClass","%s.png" % id_name))
+                    if "length" in self.config:
+                        length = self.config["length"]
+                        data_f[one]["id"] = data_f[one]["id"][:length]
+                        data_f[one]["id_for_slice"] = data_f[one]["id_for_slice"][:length]
+                        data_f[one]["img"] = data_f[one]["img"][:length]
+                        data_f[one]["gt"] = data_f[one]["gt"][:length]
+                        print("id:%s" % str(data_f[one]["id"]))
+                        print("img:%s" % str(data_f[one]["img"]))
+                        print("id_for_slice:%s" % str(data_f[one]["id_for_slice"]))
+                data_len[one] = len(data_f[one]["id"])
         print("len:%s" % str(data_len))
         return data_f,data_len
 
