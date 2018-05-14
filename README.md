@@ -6,8 +6,9 @@ The repository holds the implementation of [GAIN](https://arxiv.org/pdf/1802.101
 
 ## Prerequisite
  * Tensorflow >= 1.5
+ * Pydensecrf >= 1.0
  * Download the Pascal VOC data and the pre-train VGG16 model, please refer to [step 2 in xtudbxk/SEC-tensorflow](https://github.com/xtudbxk/SEC-tensorflow#2-download-the-data-and-model)
 
 ## Train GAIN network
- * Training: `python [model].py -g <gpu_id> -f <gpu_fraction>`
+ * Training: `python [model].py -g <gpu_id> -f <gpu_fraction> <-c if you'd like to train with CRF>`
  * Predicting Mask: `python [model].py -g <gpu_id> -f <gpu_fraction> -a inference`
