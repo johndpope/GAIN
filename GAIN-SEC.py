@@ -145,6 +145,12 @@ class GAIN():
         self.net["crf"] = tf.py_func(crf, [self.net[featemap_layer], tf.image.resize_bilinear(self.net[img_layer]+self.data.img_mean, (41,41))],tf.float32) # shape [N, h, w, C]
         return "crf"
     def build_gwrpool(self, mask_layer, is_exist=False):
+        """
+        Global Weighted Ranking Pooling proposed by SEC
+        ------------------------------------------------
+        Input: pixel-level prediction [bsize,w,h,21]
+        Output: image-level prediction [bsize,21]
+        """
         layer = "gwrp"
         player = '-'.join([mask_layer.split('-')[0], layer]) if is_exist else layer
         probs_bg, probs = self.net[mask_layer][:,:,:,0], self.net[mask_layer][:,:,:,1:]
@@ -157,10 +163,10 @@ class GAIN():
         """
         Generate the image complement.
         ------------------------------------------------------------------------
-        Input: image I[w,h,3], attention map A[w/8,h/8,#class],
-        return: image complement I[w,h,#class], where I[:,:,c] = I[:,:,c]-I[:,:,c]*resize(A[:,:,c])
+        Input: the image I[bsize,w,h,3], and the attention-map A[bsize,w/8,h/8,#class],
+        Output: the image-complement image_c[bsize*#class,w,h,3]
         """
-        image, atts = tf.image.resize_bilinear(self.net[img_layer], (self.cw,self.ch)), tf.image.resize_bilinear(self.net[att_layer], (self.cw,self.ch))
+        image, atts = tf.image.resize_bilinear(self.net[img_layer], (self.cw,self.ch)), tf.image.resize_bilinear(self.net[att_layer], (self.cw,self.ch)) # resize to input image size[w,h]
         layer = "input_c"
         rst = []
         for att in tf.unstack(atts, axis=3):

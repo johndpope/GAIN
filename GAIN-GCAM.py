@@ -158,8 +158,8 @@ class GAIN():
         """
         Generate the image complement.
         ------------------------------------------------------------------------
-        Input: image I[w,h,3], attention map A[w/8,h/8,#class],
-        return: image complement I[w,h,#class], where I[:,:,c] = I[:,:,c]-I[:,:,c]*resize(A[:,:,c])
+        Input: the image I[bsize,w,h,3], and the attention-map A[bsize,w/8,h/8,#class],
+        Output: the image-complement image_c[bsize*#class,w,h,3]
         """
         image, atts = tf.image.resize_bilinear(self.net[img_layer], (self.cw,self.ch)), tf.image.resize_bilinear(self.net[att_layer], (self.cw,self.ch))
         layer = "input_c"
