@@ -66,7 +66,7 @@ class GAIN():
         with tf.name_scope("sec") as scope:
             softmax = self.build_sp_softmax(fc) # SEC: `fc8-softmax` is our attention map
             # SEC: remove discontiouous by CRF
-            out = self.build_aggregate(softmax) # SEC: aggregate prediction to image-level by Global Weighted Ranking Pooling
+            out = self.build_gwrpool(softmax) # SEC: aggregate prediction to image-level by Global Weighted Ranking Pooling
             out = self.build_crf(fc,"input") if self.with_crf else out
         # path of `input_c` to DeepLab
         with tf.name_scope("am") as scope:
@@ -80,7 +80,7 @@ class GAIN():
                         "conv5_1","relu5_1","conv5_2","relu5_2","conv5_3","relu5_3","pool5","pool5a"], is_exist=True)
                 fc = self.build_fc(block, ["fc6","relu6","drop6","fc7","relu7","drop7","fc8"], is_exist=True)
                 softmax = self.build_sp_softmax(fc, is_exist=True)
-                out = self.build_aggregate(softmax, is_exist=True)
+                out = self.build_gwrpool(softmax, is_exist=True)
         return self.net[out]
     def build_block(self, last_layer, layer_lists, is_exist=False):
         input_layer = last_layer
@@ -144,7 +144,7 @@ class GAIN():
             return ret.astype(np.float32)
         self.net["crf"] = tf.py_func(crf, [self.net[featemap_layer], tf.image.resize_bilinear(self.net[img_layer]+self.data.img_mean, (41,41))],tf.float32) # shape [N, h, w, C]
         return "crf"
-    def build_aggregate(self, mask_layer, is_exist=False):
+    def build_gwrpool(self, mask_layer, is_exist=False):
         layer = "gwrp"
         player = '-'.join([mask_layer.split('-')[0], layer]) if is_exist else layer
         probs_bg, probs = self.net[mask_layer][:,:,:,0], self.net[mask_layer][:,:,:,1:]
