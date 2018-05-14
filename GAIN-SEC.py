@@ -312,7 +312,7 @@ class GAIN():
         #Dump the predicted mask as numpy array to disk
         gpu_options = tf.ConfigProto(gpu_options=tf.GPUOptions(per_process_gpu_memory_fraction=gpu_frac))
         self.sess = tf.Session(config=gpu_options)
-        x, gt, _, _, id_of_image, iterator_train = self.data.next_batch(batch_size=1,epoches=-1)
+        x, _, _, _, id_of_image, iterator_train = self.data.next_batch(batch_size=1,epoches=-1)
         self.build()
         self.saver["norm"] = tf.train.Saver(max_to_keep=2,var_list=self.trainable_list)
         with self.sess.as_default():
@@ -322,7 +322,7 @@ class GAIN():
             if self.config.get("model_path",False) is not False: self.restore_from_model(self.saver["norm"], self.config.get("model_path"), checkpoint=False)
             epoch, i, iterations_per_epoch_train = 0.0, 0, self.data.get_data_len()
             while epoch < 1:
-                data_x, data_gt, img_id = self.sess.run([x, gt, id_of_image])
+                data_x, img_id = self.sess.run([x, id_of_image])
                 cimg_id = img_id[0].decode("utf-8")
                 preds = self.sess.run(self.net["fc8-softmax"], feed_dict={self.net["input"]:data_x, self.net["drop_prob"]:0.5})
                 for pred in preds:

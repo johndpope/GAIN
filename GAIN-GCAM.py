@@ -265,7 +265,7 @@ class GAIN():
     def train(self, base_lr, weight_decay, momentum, batch_size, epoches, gpu_frac):
         gpu_options = tf.ConfigProto(gpu_options=tf.GPUOptions(per_process_gpu_memory_fraction=gpu_frac))
         self.sess = tf.Session(config=gpu_options)
-        x, _, y, c, id_of_image, iterator_train = self.data.next_batch(category="train",batch_size=batch_size,epoches=-1)
+        x, _, y, _, id_of_image, iterator_train = self.data.next_batch(category="train",batch_size=batch_size,epoches=-1)
         self.build()
         self.optimize(base_lr,momentum, weight_decay)
         self.saver["norm"] = tf.train.Saver(max_to_keep=2,var_list=self.trainable_list)
