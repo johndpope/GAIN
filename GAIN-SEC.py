@@ -64,9 +64,11 @@ class GAIN():
                     "conv5_1","relu5_1","conv5_2","relu5_2","conv5_3","relu5_3","pool5","pool5a"])
             fc = self.build_fc(block, ["fc6","relu6","drop6","fc7","relu7","drop7","fc8"])
         with tf.name_scope("sec") as scope:
-            softmax = self.build_sp_softmax(fc) # SEC: `fc8-softmax` is our attention map
+            # SEC: `fc8-softmax` is our attention map
+            softmax = self.build_sp_softmax(fc)
+            # SEC: aggregate prediction to image-level by Global Weighted Ranking Pooling
+            out = self.build_gwrpool(softmax)
             # SEC: remove discontiouous by CRF
-            out = self.build_gwrpool(softmax) # SEC: aggregate prediction to image-level by Global Weighted Ranking Pooling
             out = self.build_crf(fc,"input") if self.with_crf else out
         # path of `input_c` to DeepLab
         with tf.name_scope("am") as scope:
@@ -123,15 +125,14 @@ class GAIN():
                 else: raise Exception("Unimplemented layer: {}".format(layer))
                 last_layer = player
         return last_layer
-    def build_sp_softmax(self, last_layer, is_exist=False): # SEC
-        layer = "fc8-softmax"
-        player = '-'.join([last_layer.split('-')[0], layer]) if is_exist else layer
+    def build_sp_softmax(self, last_layer, is_exist=False, layer_name="fc8-softmax"): # SEC
+        layer_name = '-'.join([last_layer.split('-')[0], layer_name]) if is_exist else layer
         preds_max = tf.reduce_max(self.net[last_layer], axis=3, keepdims=True)
         preds_exp = tf.exp(self.net[last_layer]-preds_max)
-        self.net[player] = preds_exp/tf.reduce_sum(preds_exp,axis=3, keepdims=True) + self.min_prob
-        self.net[player] = self.net[player]/tf.reduce_sum(self.net[player], axis=3, keepdims=True)
-        return player
-    def build_crf(self, featemap_layer, img_layer): # SEC
+        self.net[layer_name] = preds_exp/tf.reduce_sum(preds_exp,axis=3, keepdims=True) + self.min_prob
+        self.net[layer_name] = self.net[layer_name]/tf.reduce_sum(self.net[layer_name], axis=3, keepdims=True)
+        return layer_name
+    def build_crf(self, featemap_layer, img_layer, layer_name="crf"):
         def crf(featemap, image):
             crf_config = {"g_sxy":3/12,"g_compat":3,"bi_sxy":80/12,"bi_srgb":13,"bi_compat":10,"iterations":5}
             batch_size = featemap.shape[0]
@@ -142,8 +143,8 @@ class GAIN():
             ret /= np.sum(ret,axis=3, keepdims=True)
             ret = np.log(ret)
             return ret.astype(np.float32)
-        self.net["crf"] = tf.py_func(crf, [self.net[featemap_layer], tf.image.resize_bilinear(self.net[img_layer]+self.data.img_mean, (41,41))],tf.float32) # shape [N, h, w, C]
-        return "crf"
+        self.net[layer_name] = tf.py_func(crf, [self.net[featemap_layer], tf.image.resize_bilinear(self.net[img_layer]+self.data.img_mean, (41,41))],tf.float32) # shape [N, h, w, C]
+        return layer_name
     def build_gwrpool(self, mask_layer, is_exist=False):
         """
         Global Weighted Ranking Pooling proposed by SEC
@@ -159,15 +160,14 @@ class GAIN():
         class_preds = tf.concat([class_probs_bg, class_probs], axis=1)
         self.net[player] = class_preds
         return player
-    def build_input_c(self, att_layer, img_layer, w=10, th=0.5):
+    def build_input_c(self, att_layer, img_layer, w=10, th=0.5, layer_name="input_c"):
         """
         Generate the image complement.
         ------------------------------------------------------------------------
         Input: the image I[bsize,w,h,3], and the attention-map A[bsize,w/8,h/8,#class],
         Output: the image-complement image_c[bsize*#class,w,h,3]
         """
-        image, atts = tf.image.resize_bilinear(self.net[img_layer], (self.cw,self.ch)), tf.image.resize_bilinear(self.net[att_layer], (self.cw,self.ch)) # resize to input image size[w,h]
-        layer = "input_c"
+        image, atts = tf.image.resize_bilinear(self.net[img_layer], (self.cw,self.ch)), tf.image.resize_bilinear(self.net[att_layer], (self.cw,self.ch))
         rst = []
         for att in tf.unstack(atts, axis=3):
             c = tf.expand_dims(image-tf.reshape(tf.multiply(tf.reshape(image, (-1,3)), tf.reshape(att, (-1,1))), (-1,self.cw,self.ch,3)), axis=1)
@@ -175,8 +175,8 @@ class GAIN():
             rst.append(c)
         x = tf.stack(rst, axis=1)
         image_c = tf.reshape(x, (-1,self.cw,self.ch,3))
-        self.net[layer] = image_c
-        return layer
+        self.net[layer_name] = image_c
+        return layer_name
     def load_init_model(self):
         model_path = self.config["init_model_path"]
         self.init_model = np.load(model_path,encoding="latin1").item()

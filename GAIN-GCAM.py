@@ -121,7 +121,7 @@ class GAIN():
                 else: raise Exception("Unimplemented layer: {}".format(layer))
                 last_layer = player
         return last_layer
-    def build_crf(self, featemap_layer, img_layer):
+    def build_crf(self, featemap_layer, img_layer, layer_name="crf"):
         def crf(featemap, image):
             crf_config = {"g_sxy":3/12,"g_compat":3,"bi_sxy":80/12,"bi_srgb":13,"bi_compat":10,"iterations":5}
             batch_size = featemap.shape[0]
@@ -132,9 +132,9 @@ class GAIN():
             ret /= np.sum(ret,axis=3, keepdims=True)
             ret = np.log(ret)
             return ret.astype(np.float32)
-        self.net["crf"] = tf.py_func(crf, [self.net[featemap_layer], tf.image.resize_bilinear(self.net[img_layer]+self.data.img_mean, (41,41))],tf.float32) # shape [N, h, w, C]
-        return "crf"
-    def build_grad_cam(self, target, fmap):
+        self.net[layer_name] = tf.py_func(crf, [self.net[featemap_layer], tf.image.resize_bilinear(self.net[img_layer]+self.data.img_mean, (41,41))],tf.float32) # shape [N, h, w, C]
+        return layer_name
+    def build_grad_cam(self, target, fmap, layer_name="gcam"):
         """
         Implement Grad-CAM(ICCV'17)
         -----------------------------------
@@ -152,9 +152,9 @@ class GAIN():
             cam_c = tf.reduce_sum(tf.reshape(tf.reshape(alpha, (-1,1))*tf.reshape(tf.transpose(A, [0,3,1,2]), (-1,41*41)), (-1,512,41*41)), axis=1)
             cams.append(tf.nn.relu(cam_c))
         cams = tf.reshape(tf.stack(cams, axis=2), (-1,41,41,self.category_num))
-        self.net["gcam"] = cams
-        return "gcam"
-    def build_input_c(self, att_layer, img_layer, w=10, th=0.5):
+        self.net[layer_name] = cams
+        return layer_name
+    def build_input_c(self, att_layer, img_layer, w=10, th=0.5, layer_name="input_c"):
         """
         Generate the image complement.
         ------------------------------------------------------------------------
@@ -162,7 +162,6 @@ class GAIN():
         Output: the image-complement image_c[bsize*#class,w,h,3]
         """
         image, atts = tf.image.resize_bilinear(self.net[img_layer], (self.cw,self.ch)), tf.image.resize_bilinear(self.net[att_layer], (self.cw,self.ch))
-        layer = "input_c"
         rst = []
         for att in tf.unstack(atts, axis=3):
             c = tf.expand_dims(image-tf.reshape(tf.multiply(tf.reshape(image, (-1,3)), tf.reshape(att, (-1,1))), (-1,self.cw,self.ch,3)), axis=1)
@@ -170,8 +169,8 @@ class GAIN():
             rst.append(c)
         x = tf.stack(rst, axis=1)
         image_c = tf.reshape(x, (-1,self.cw,self.ch,3))
-        self.net[layer] = image_c
-        return layer
+        self.net[layer_name] = image_c
+        return layer_name
     def load_init_model(self):
         """Load the pre-trained VGG16 weight"""
         model_path = self.config["init_model_path"]
