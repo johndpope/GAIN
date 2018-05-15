@@ -287,7 +287,7 @@ class GAIN():
                     self.saver["lr"].save(self.sess, os.path.join(self.config.get("saver_path",SAVER_PATH),"lr-%f"%base_lr), global_step=i)
                     self.sess.run(tf.assign(self.net["lr"],new_lr))
                     base_lr = new_lr
-                data_x, data_y, _, data_id_of_image = self.sess.run([x, y, c, id_of_image])
+                data_x, data_y, data_id_of_image = self.sess.run([x, y, id_of_image])
                 params = {self.net["input"]:data_x, self.net["label"]:data_y, self.net["drop_prob"]:0.5}
                 self.sess.run(self.net["accum_gradient_accum"], feed_dict=params)
                 if i % self.accum_num == self.accum_num-1:
@@ -338,7 +338,7 @@ if __name__ == "__main__":
     if opt.with_crf: SAVER_PATH, PRED_PATH = "gain_gcam_crf-saver", "gain_gcam_crf-preds"
     else: SAVER_PATH, PRED_PATH = "gain_gcam-saver", "gain_gcam-preds"
     # actual batch size=batch_size*accum_num
-    batch_size, input_size, category_num, epoches = 1, (321,321), 21, 5
+    batch_size, input_size, category_num, epoches = 1, (321,321), 21, 10
     category = "train+val" if opt.action == 'inference' else "train"
     data = dataset({"batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "categorys":[category]})
     if opt.restore_iter_id == None: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "init_model_path":"./model/init.npy", "accum_num":16, "with_crf":opt.with_crf})
