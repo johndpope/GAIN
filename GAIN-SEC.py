@@ -176,7 +176,7 @@ class GAIN():
         cams = tf.reshape(tf.stack(cams, axis=2), (-1,41,41,self.category_num))
         self.net[layer_name] = cams
         return layer_name
-    def build_input_c(self, att_layer, img_layer, w=10, th=0.5):
+    def build_input_c(self, att_layer, img_layer, w=10, th=0.5, layer_name="input_c"):
         """
         Generate the image complement.
         ------------------------------------------------------------------------
@@ -184,16 +184,15 @@ class GAIN():
         Output: the image-complement image_c[bsize*#class,w,h,3]
         """
         image, atts = tf.image.resize_bilinear(self.net[img_layer], (self.cw,self.ch)), tf.image.resize_bilinear(self.net[att_layer], (self.cw,self.ch))
-        layer = "input_c"
         rst = []
-        for att in tf.unstack(atts, axis=3):
-            c = tf.expand_dims(image-tf.reshape(tf.multiply(tf.reshape(image, (-1,3)), tf.reshape(att, (-1,1))), (-1,self.cw,self.ch,3)), axis=1)
-            c = tf.nn.sigmoid(w*(c-th)) # threshold masking
-            rst.append(c)
+        for att in tf.unstack(atts, axis=3): # generate class-specific image complement
+            att = tf.nn.sigmoid(w*(att-th)) # threshold masking
+            img_c = tf.expand_dims(image-tf.reshape(tf.multiply(tf.reshape(image, (-1,3)), tf.reshape(att, (-1,1))), (-1,self.cw,self.ch,3)), axis=1)
+            rst.append(img_c)
         x = tf.stack(rst, axis=1)
         image_c = tf.reshape(x, (-1,self.cw,self.ch,3))
-        self.net[layer] = image_c
-        return layer
+        self.net[layer_name] = image_c
+        return layer_name
     def load_init_model(self):
         model_path = self.config["init_model_path"]
         self.init_model = np.load(model_path,encoding="latin1").item()

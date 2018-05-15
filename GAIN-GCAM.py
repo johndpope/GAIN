@@ -53,13 +53,11 @@ class GAIN():
     def create_network(self):
         if "init_model_path" in self.config: self.load_init_model()
         # architecture of VGG16
-        self.vgg16_layers = ["conv1_1","relu1_1","conv1_2","relu1_2","pool1","conv2_1","relu2_1","conv2_2","relu2_2","pool2","conv3_1","relu3_1","conv3_2","relu3_2","conv3_3","relu3_3","pool3","conv4_1","relu4_1","conv4_2","relu4_2","conv4_3","relu4_3","pool4","conv5_1","relu5_1","conv5_2","relu5_2","conv5_3","relu5_3","pool5","fc6","relu6","drop6","fc7","relu7","drop7"]
+        self.vgg16_layers = ["conv1_1","relu1_1","conv1_2","relu1_2","pool1","conv2_1","relu2_1","conv2_2","relu2_2","pool2","conv3_1","relu3_1","conv3_2","relu3_2","conv3_3","relu3_3","pool3","conv4_1","relu4_1","conv4_2","relu4_2","conv4_3","relu4_3","pool4","conv5_1","relu5_1","conv5_2","relu5_2","conv5_3","relu5_3","pool5","fc6","relu6","drop6","fc7","relu7","drop7","fc8"]
         # path of `input` to VGG16
         with tf.name_scope("vgg16") as scope:
             block = self.build_block("input", self.vgg16_layers[:31])
             last_layer = self.build_fc(block, self.vgg16_layers[31:])
-            self.net[last_layer] = tf.reduce_sum(self.net[last_layer], axis=(1,2))
-            fc = self.build_fc(last_layer, ["fc8"])
             # generate the attention map with Grad-CAM
             gcam = self.build_grad_cam(target="fc8", fmap="pool5")
             # remove discontiouous by CRF
@@ -72,8 +70,6 @@ class GAIN():
                 input_c = self.build_input_c("gcam", "input")
                 block = self.build_block(input_c, self.vgg16_layers[:31], is_exist=True)
                 last_layer = self.build_fc(block, self.vgg16_layers[31:], is_exist=True)
-                self.net[last_layer] = tf.reduce_sum(self.net[last_layer], axis=(1,2))
-                fc = self.build_fc(last_layer, ["fc8"], is_exist=True)
         return self.net[out]
     def build_block(self, last_layer, layer_lists, is_exist=False):
         input_layer = last_layer
@@ -106,7 +102,9 @@ class GAIN():
                 if layer.startswith("fc"):
                     weights, bias = self.get_weights_and_bias(layer, is_exist=is_exist)
                     if layer.startswith("fc6"): self.net[player] = tf.nn.atrous_conv2d(self.net[last_layer], weights, rate=12, padding="SAME", name="conv")
-                    elif layer.startswith("fc8"): self.net[player] = tf.matmul(self.net[last_layer], weights)
+                    elif layer.startswith("fc8"):
+                        self.net[last_layer] = tf.reduce_sum(self.net[last_layer], axis=(1,2))
+                        self.net[player] = tf.matmul(self.net[last_layer], weights)
                     else: self.net[player] = tf.nn.conv2d(self.net[last_layer], weights, strides=[1,1,1,1], padding="SAME", name="conv")
                     self.net[player] = tf.nn.bias_add(self.net[player], bias, name="bias")
                 elif layer.startswith("batch_norm"): self.net[player] = tf.contrib.layers.batch_norm(self.net[last_layer])
@@ -157,10 +155,10 @@ class GAIN():
         """
         image, atts = tf.image.resize_bilinear(self.net[img_layer], (self.cw,self.ch)), tf.image.resize_bilinear(self.net[att_layer], (self.cw,self.ch))
         rst = []
-        for att in tf.unstack(atts, axis=3):
-            c = tf.expand_dims(image-tf.reshape(tf.multiply(tf.reshape(image, (-1,3)), tf.reshape(att, (-1,1))), (-1,self.cw,self.ch,3)), axis=1)
-            c = tf.nn.sigmoid(w*(c-th)) # threshold masking
-            rst.append(c)
+        for att in tf.unstack(atts, axis=3): # generate class-specific image complement
+            att = tf.nn.sigmoid(w*(att-th)) # threshold masking
+            img_c = tf.expand_dims(image-tf.reshape(tf.multiply(tf.reshape(image, (-1,3)), tf.reshape(att, (-1,1))), (-1,self.cw,self.ch,3)), axis=1)
+            rst.append(img_c)
         x = tf.stack(rst, axis=1)
         image_c = tf.reshape(x, (-1,self.cw,self.ch,3))
         self.net[layer_name] = image_c
