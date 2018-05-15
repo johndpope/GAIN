@@ -11,12 +11,12 @@ from dataset import dataset
 from crf import crf_inference
 
 """
-GAIN-SEC-GCAM
+GAIN-SEC
 ----------------------
-This code implements the model described in the experiment section of GAIN(https://arxiv.org/pdf/1802.10171.pdf)
+This code implements GAIN with the following setting:
  * Segmentation model: SEC(ECCV'16)
   (+) the `GlobalWeightedRankingPooling` layer is separated from the `expand_loss` of [xtudbxk]'s implementation
-  (+) the CAM is replaced with Grad-CAM, so there's no need to preprocessing the localization cues
+  (+) the CAM is replaced with Grad-CAM, so there's no need to preprocess the localization cues
  * Base model: DeepLab-CRF-LargeFOV(ICLR'15)
 """
 

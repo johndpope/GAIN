@@ -13,9 +13,9 @@ from crf import crf_inference
 """
 GAIN-GCAM
 ----------------------
-This code implements the model described in the experiment section of GAIN(https://arxiv.org/pdf/1802.10171.pdf)
+This code implements GAIN with the following setting:
  * Segmentation model: Grad-CAM(ICCV'17)
- * Base model: VGG16 (remove 2 pooling layer)
+ * Base model: VGG16 (remove 2 max-pool)
 """
 
 def parse_arg():
