@@ -55,14 +55,12 @@ class GAIN():
         return self.net["output"]
     def create_network(self):
         if "init_model_path" in self.config: self.load_init_model()
+        # architecture of DeepLab
+        self.deeplab_layers = ["conv1_1","relu1_1","conv1_2","relu1_2","pool1", "conv2_1","relu2_1","conv2_2","relu2_2","pool2","conv3_1","relu3_1","conv3_2","relu3_2","conv3_3","relu3_3","pool3","conv4_1","relu4_1","conv4_2","relu4_2","conv4_3","relu4_3","pool4","conv5_1","relu5_1","conv5_2","relu5_2","conv5_3","relu5_3","pool5","pool5a","fc6","relu6","drop6","fc7","relu7","drop7","fc8"]
         # path of `input` to DeepLab
         with tf.name_scope("deeplab") as scope:
-            block = self.build_block("input", [
-                    "conv1_1","relu1_1","conv1_2","relu1_2","pool1", "conv2_1","relu2_1","conv2_2","relu2_2","pool2",
-                    "conv3_1","relu3_1","conv3_2","relu3_2","conv3_3","relu3_3","pool3",
-                    "conv4_1","relu4_1","conv4_2","relu4_2","conv4_3","relu4_3","pool4",
-                    "conv5_1","relu5_1","conv5_2","relu5_2","conv5_3","relu5_3","pool5","pool5a"])
-            fc = self.build_fc(block, ["fc6","relu6","drop6","fc7","relu7","drop7","fc8"])
+            block = self.build_block("input", self.deeplab_layers[:32])
+            fc = self.build_fc(block, self.deeplab_layers[32:])
         with tf.name_scope("sec") as scope:
             # SEC: `fc8-softmax` is our attention map
             softmax = self.build_sp_softmax(fc)
@@ -77,12 +75,8 @@ class GAIN():
             with tf.variable_scope(tf.get_variable_scope().name, reuse=tf.AUTO_REUSE) as var_scope:
                 var_scope.reuse_variables()
                 input_c = self.build_input_c("fc8-softmax", "input")
-                block = self.build_block(input_c, [
-                        "conv1_1","relu1_1","conv1_2","relu1_2","pool1", "conv2_1","relu2_1","conv2_2","relu2_2","pool2",
-                        "conv3_1","relu3_1","conv3_2","relu3_2","conv3_3","relu3_3","pool3",
-                        "conv4_1","relu4_1","conv4_2","relu4_2","conv4_3","relu4_3","pool4",
-                        "conv5_1","relu5_1","conv5_2","relu5_2","conv5_3","relu5_3","pool5","pool5a"], is_exist=True)
-                fc = self.build_fc(block, ["fc6","relu6","drop6","fc7","relu7","drop7","fc8"], is_exist=True)
+                block = self.build_block(input_c, self.deeplab_layers[:32], is_exist=True)
+                fc = self.build_fc(block, self.deeplab_layers[32:], is_exist=True)
                 softmax = self.build_sp_softmax(fc, is_exist=True)
                 out = self.build_gwrpool(softmax, is_exist=True)
         return self.net[out]
