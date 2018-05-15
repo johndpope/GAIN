@@ -126,7 +126,7 @@ class GAIN():
                 last_layer = player
         return last_layer
     def build_sp_softmax(self, last_layer, is_exist=False, layer_name="fc8-softmax"): # SEC
-        layer_name = '-'.join([last_layer.split('-')[0], layer_name]) if is_exist else layer
+        layer_name = '-'.join([last_layer.split('-')[0], layer_name]) if is_exist else layer_name
         preds_max = tf.reduce_max(self.net[last_layer], axis=3, keepdims=True)
         preds_exp = tf.exp(self.net[last_layer]-preds_max)
         self.net[layer_name] = preds_exp/tf.reduce_sum(preds_exp,axis=3, keepdims=True) + self.min_prob
