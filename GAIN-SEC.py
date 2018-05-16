@@ -41,8 +41,7 @@ class GAIN():
         self.data, self.min_prob = self.config.get("data",None), self.config.get("min_prob",0.0001)
         self.net, self.loss, self.saver, self.weights, self.stride = {}, {}, {}, {}, {}
         self.trainable_list, self.lr_1_list, self.lr_2_list, self.lr_4_list, self.lr_8_list = [], [], [], [], []
-        self.stride["input"] = 1
-        self.stride["input_c"] = 1
+        self.stride["input"], self.stride["input_c"] = 1, 1
         self.agg_w, self.agg_w_bg = np.reshape(np.array([0.996**i for i in range(41*41 -1, -1, -1)]),(1,-1,1)), np.reshape(np.array([0.999**i for i in range(41*41 -1, -1, -1)]),(1,-1))
 
     def build(self):
@@ -371,7 +370,7 @@ if __name__ == "__main__":
     if opt.with_crf: SAVER_PATH, PRED_PATH = "gain_sec_gcam_crf-saver", "gain_sec_gcam_crf-preds"
     else: SAVER_PATH, PRED_PATH = "gain_sec_gcam-saver", "gain_sec_gcam-preds"
     # actual batch size=batch_size*accum_num
-    batch_size, input_size, category_num, epoches = 1, (321,321), 21, 10
+    batch_size, input_size, category_num, epoches = 1, (321,321), 21, 5
     category = "train+val" if opt.action == 'inference' else "train"
     data = dataset({"batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "categorys":[category]})
     if opt.restore_iter_id == None: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "init_model_path":"./model/init.npy", "accum_num":16, "with_crf":opt.with_crf})
