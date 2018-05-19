@@ -36,7 +36,7 @@ class GAIN():
         # size of complement image(`input_c`)
         self.cw, self.ch = 321,321
         self.category_num, self.accum_num, self.with_crf = self.config.get("category_num",21), self.config.get("accum_num",1), self.config.get("with_crf",False)
-        self.data, self.min_prob = self.config.get("data",None), self.config.get("min_prob",0.0001)
+        self.data, self.min_prob, self.iter_num = self.config.get("data",None), self.config.get("min_prob",0.0001), self.config.get("iter_num",0)
         self.net, self.loss, self.saver, self.weights, self.stride = {}, {}, {}, {}, {}
         self.trainable_list, self.lr_1_list, self.lr_2_list, self.lr_4_list, self.lr_8_list = [], [], [], [], []
         self.stride["input"], self.stride["input_c"] = 1, 1
@@ -272,7 +272,7 @@ class GAIN():
             start_time = time.time()
             print("start_time: {}\nconfig -- lr:{} weight_decay:{} momentum:{} batch_size:{} epoches:{}".format(start_time, base_lr, weight_decay, momentum, batch_size, epoches))
             
-            epoch, i, iterations_per_epoch_train = 0.0, 0, self.data.get_data_len()//batch_size
+            epoch, i, iterations_per_epoch_train = 0.0, self.iter_num, self.data.get_data_len()//batch_size
             while epoch < epoches:
                 if i == 0: self.sess.run(tf.assign(self.net["lr"],base_lr))
                 if i == 10*iterations_per_epoch_train:
@@ -340,6 +340,6 @@ if __name__ == "__main__":
     category = "train+val" if opt.action == 'inference' else "train"
     data = dataset({"batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "categorys":[category]})
     if opt.restore_iter_id == None: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "init_model_path":"./model/init.npy", "accum_num":16, "with_crf":opt.with_crf})
-    else: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "model_path":"{}/norm-{}".format(SAVER_PATH, opt.restore_iter_id), "accum_num":16, "with_crf":opt.with_crf})
+    else: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "model_path":"{}/norm-{}".format(SAVER_PATH, opt.restore_iter_id), "accum_num":16, "with_crf":opt.with_crf, "iter_num":int(opt.restore_iter_id)})
     if opt.action == 'train': gain.train(base_lr=1e-3, weight_decay=5e-5, momentum=0.9, batch_size=batch_size, epoches=epoches, gpu_frac=float(opt.gpu_frac))
     elif opt.action == 'inference': gain.inference(gpu_frac=float(opt.gpu_frac))
