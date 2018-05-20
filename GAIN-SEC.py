@@ -142,7 +142,7 @@ class GAIN():
             image = image.astype(np.uint8)
             ret = np.zeros(featemap.shape,dtype=np.float32)
             for i in range(batch_size): ret[i,:,:,:] = crf_inference(featemap[i], image[i], crf_config, self.category_num)
-            ret = np.maximum(np.minimum(ret, self.clip_eps), 1) # clip
+            ret = np.nan_to_num(ret) # deal with np.nan
             ret[ret<self.min_prob] = self.min_prob
             ret /= np.sum(ret,axis=3, keepdims=True)
             ret = np.maximum(np.minimum(ret, self.clip_eps), 1) # clip
