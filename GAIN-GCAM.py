@@ -56,8 +56,8 @@ class GAIN():
         deeplab_layers = ["conv1_1","relu1_1","conv1_2","relu1_2","pool1", "conv2_1","relu2_1","conv2_2","relu2_2","pool2","conv3_1","relu3_1","conv3_2","relu3_2","conv3_3","relu3_3","pool3","conv4_1","relu4_1","conv4_2","relu4_2","conv4_3","relu4_3","pool4","conv5_1","relu5_1","conv5_2","relu5_2","conv5_3","relu5_3","pool5","pool5a","fc6","relu6","drop6","fc7","relu7","drop7","fc8"]
         # Option 2: modified DeepLab by removing several Conv+Pool layers
         small_deeplab_layers = ["conv1_1","relu1_1","conv1_2","relu1_2","pool1","conv2_1","relu2_1","conv2_2","relu2_2","pool2","conv3_1","relu3_1","conv3_2","relu3_2","conv3_3","relu3_3","pool3","drop7","fc8"]
-        # self.network_layers, num_cv, self.last_cv, self.dim_fmap = deeplab_layers, 32, "pool5", 512
-        self.network_layers, num_cv, self.last_cv, self.dim_fmap = small_deeplab_layers, 17, "pool3", 256
+        # self.network_layers, num_cv, self.last_cv, self.dim_fmap, self.mask_layer_name = deeplab_layers, 32, "pool5", 512, "gcam"
+        self.network_layers, num_cv, self.last_cv, self.dim_fmap, self.mask_layer_name = small_deeplab_layers, 17, "pool3", 256, "gcam"
         
         # path of `input` to VGG16
         with tf.name_scope("base-cl") as scope:
@@ -260,6 +260,7 @@ class GAIN():
         self.net["accum_gradient_update"]  = opt.apply_gradients(new_gradients)
 
     def train(self, base_lr, weight_decay, momentum, batch_size, epoches, gpu_frac):
+        if not os.path.exists(PROB_PATH): os.makedirs(PROB_PATH)
         gpu_options = tf.ConfigProto(gpu_options=tf.GPUOptions(per_process_gpu_memory_fraction=gpu_frac))
         self.sess = tf.Session(config=gpu_options)
         x, _, y, _, id_of_image, iterator_train = self.data.next_batch(category="train",batch_size=batch_size,epoches=-1)
@@ -299,6 +300,9 @@ class GAIN():
                 if i%500 == 0:
                     summary, loss_cl, loss_am, loss_crf, loss_l2, loss_total, lr = self.sess.run([self.merged, self.loss["loss_cl"], self.loss["loss_am"], self.loss["loss_crf"], self.loss["l2"], self.loss["total"], self.net["lr"]], feed_dict=params)
                     print("{:.1f}th epoch, {}iters, lr={:.5f}, loss={:.5f}+{:.5f}+{:.5f}+{:.5f}={:.5f}".format(epoch, i, lr, loss_cl, loss_am, loss_crf, weight_decay*loss_l2, loss_total))
+                    # generate mask samples
+                    img_ids, pred_masks = self.sess.run([id_of_image, self.net[self.mask_layer_name]], feed_dict=params)
+                    self.save_masks(self, pred_masks, img_ids, PROB_PATH, pref=str(i))
                     self.writer.add_summary(summary, global_step=i)
                 if i%3000 == 2999:
                     self.saver["norm"].save(self.sess, os.path.join(self.config.get("saver_path",SAVER_PATH),"norm"), global_step=i)
@@ -306,6 +310,18 @@ class GAIN():
                 epoch = i/iterations_per_epoch_train
             end_time = time.time()
             print("end_time:{}\nduration time:{}".format(end_time, (end_time-start_time)))
+    def save_masks(self, pred_masks, img_ids, save_dir, eps=1e-5, pref=None):
+        try:
+            for img_id, pred in zip(img_ids,pred_masks):
+                scores_exp = np.exp(pred-np.max(pred, axis=2, keepdims=True))
+                probs = scores_exp/np.sum(scores_exp, axis=2, keepdims=True)
+                probs = nd.zoom(probs, (321/probs.shape[0], 321/probs.shape[1], 1.0), order=1)
+                probs[probs<eps] = eps
+                mask = np.argmax(probs, axis=2)
+                fname = '{}/{}.pkl'.format(save_dir, img_id.decode("utf-8")) if pref is None else '{}/{}th-{}.pkl'.format(save_dir, pref, img_id.decode("utf-8"))
+                cPickle.dump(mask, open(fname, 'wb'))
+            return True
+        except: return False
     def inference(self, gpu_frac, eps=1e-5):
         if not os.path.exists(PRED_PATH): os.makedirs(PRED_PATH)
         #Dump the predicted mask as numpy array to disk
@@ -322,15 +338,8 @@ class GAIN():
             epoch, i, iterations_per_epoch_train = 0.0, 0, self.data.get_data_len()
             while epoch < 1:
                 data_x, data_gt, img_id = self.sess.run([x, gt, id_of_image])
-                cimg_id = img_id[0].decode("utf-8")
-                preds = self.sess.run(self.net["gcam"], feed_dict={self.net["input"]:data_x, self.net["drop_prob"]:0.5})
-                for pred in preds:
-                    scores_exp = np.exp(pred-np.max(pred, axis=2, keepdims=True))
-                    probs = scores_exp/np.sum(scores_exp, axis=2, keepdims=True)
-                    probs = nd.zoom(probs, (321/probs.shape[0], 321/probs.shape[1], 1.0), order=1)
-                    probs[probs<eps] = eps
-                    mask = np.argmax(probs, axis=2)
-                    cPickle.dump(mask, open('{}/{}.pkl'.format(PRED_PATH, img_id[0].decode("utf-8")), 'wb'))
+                pred_masks = self.sess.run(self.net[self.mask_layer_name], feed_dict={self.net["input"]:data_x, self.net["drop_prob"]:0.5})
+                self.save_masks(self, pred_masks, img_id, PRED_PATH, eps=eps)
                 i+=1
                 epoch = i/iterations_per_epoch_train
 
@@ -339,8 +348,8 @@ if __name__ == "__main__":
     opt = parse_arg()
     os.environ["CUDA_VISIBLE_DEVICES"] = opt.gpu_id
     # with CRF(NIPS'11) or not
-    if opt.with_crf: SAVER_PATH, PRED_PATH = "gain_gcam_crf-saver", "gain_gcam_crf-preds"
-    else: SAVER_PATH, PRED_PATH = "gain_gcam-saver", "gain_gcam-preds"
+    if opt.with_crf: SAVER_PATH, PRED_PATH, PROB_PATH = "gain_gcam_crf-saver", "gain_gcam_crf-preds", "gain_gcam_crf-probs"
+    else: SAVER_PATH, PRED_PATH, PROB_PATH = "gain_gcam-saver", "gain_gcam-preds", "gain_gcam-probs"
     # actual batch size=batch_size*accum_num
     batch_size, input_size, category_num, epoches = 1, (321,321), 21, 10
     category = "train+val" if opt.action == 'inference' else "train"
