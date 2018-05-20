@@ -216,7 +216,7 @@ class GAIN():
         return tf.reduce_mean(tf.reduce_sum([tf.nn.sigmoid_cross_entropy_with_logits(logits=self.net["fc8"][:,c], labels=tf.cast(self.net["label"][:,c], tf.float32)) for c in range(self.category_num)]))
     def get_crf_loss(self):
         """Constrain the Attention Map by Conditional Random Field(NIPS'11)"""
-        constrain_loss = tf.reduce_mean(tf.reduce_sum(tf.exp(self.net["crf"]) * tf.log(tf.clip_by_value(tf.exp(self.net["crf"])/self.net[self.mask_layer_name],self.clip_eps,1.0)), axis=3)) if self.with_crf else tf.constant(0.0)
+        constrain_loss = tf.maximum(tf.constant(0.0), tf.reduce_mean(tf.reduce_sum(tf.exp(self.net["crf"]) * tf.log(tf.clip_by_value(tf.exp(self.net["crf"])/self.net[self.mask_layer_name],self.clip_eps,1.0)), axis=3))) if self.with_crf else tf.constant(0.0)
         self.loss["constrain"] = constrain_loss
         return constrain_loss
     def get_am_loss(self):
