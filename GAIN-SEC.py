@@ -163,6 +163,7 @@ class GAIN():
         class_probs = tf.reduce_sum(tf.contrib.framework.sort(tf.reshape(probs,(-1,41*41,20)), axis=1)*self.agg_w/np.sum(self.agg_w), axis=1)
         class_probs_bg = tf.reshape(tf.reduce_sum(tf.contrib.framework.sort(tf.reshape(probs_bg,(-1,41*41)), axis=1)*self.agg_w_bg/np.sum(self.agg_w_bg), axis=1), (-1,1))
         class_preds = tf.concat([class_probs_bg, class_probs], axis=1)
+        class_preds = tf.clip_by_value(class_preds,self.clip_eps,1.0)
         self.net[player] = class_preds
         return player
     def build_grad_cam(self, target, fmap, layer_name="gcam"):
@@ -243,7 +244,7 @@ class GAIN():
     def get_cl_loss(self): # seed + expand
         """SEC training loss (directly taken from xtudbxk's implementation for SEC[ECCV'16])"""
         seed_loss = -tf.reduce_mean(tf.reduce_sum(self.net["cues"]*tf.log(tf.clip_by_value(self.net["fc8-softmax"],self.clip_eps,1.0)), axis=(1,2,3), keepdims=True)/tf.reduce_sum(self.net["cues"], axis=(1,2,3), keepdims=True))
-        expand_loss = tf.reduce_mean(tf.reduce_sum([tf.nn.sigmoid_cross_entropy_with_logits(logits=self.net["gwrp"][:,c], labels=tf.cast(tf.greater(self.net["label"][:,c], 0), tf.float32)) for c in range(self.category_num)]))
+        expand_loss = tf.reduce_mean(tf.reduce_sum([-tf.cast(tf.greater(self.net["label"][:,c], 0), tf.float32) * tf.log(self.net["gwrp"][:,c]) for c in range(self.category_num)]))
         self.loss["seed"] = seed_loss
         self.loss["expand"] = expand_loss
         return seed_loss+expand_loss
