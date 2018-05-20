@@ -142,9 +142,10 @@ class GAIN():
             image = image.astype(np.uint8)
             ret = np.zeros(featemap.shape,dtype=np.float32)
             for i in range(batch_size): ret[i,:,:,:] = crf_inference(featemap[i], image[i], crf_config, self.category_num)
+            ret = np.maximum(np.minimum(ret, self.clip_eps), 1) # clip
             ret[ret<self.min_prob] = self.min_prob
             ret /= np.sum(ret,axis=3, keepdims=True)
-            ret = np.maximum(np.minimum(ret, self.clip_eps), 1)
+            ret = np.maximum(np.minimum(ret, self.clip_eps), 1) # clip
             ret = np.log(ret)
             return ret.astype(np.float32)
         self.net[layer_name] = tf.py_func(crf, [self.net[featemap_layer], tf.image.resize_bilinear(self.net[img_layer]+self.data.img_mean, (41,41))],tf.float32) # shape [N, h, w, C]
