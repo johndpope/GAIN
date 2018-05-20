@@ -42,6 +42,7 @@ class GAIN():
         self.net, self.loss, self.saver, self.weights, self.stride = {}, {}, {}, {}, {}
         self.trainable_list, self.lr_1_list, self.lr_2_list, self.lr_4_list, self.lr_8_list = [], [], [], [], []
         self.stride["input"], self.stride["input_c"] = 1, 1
+        self.clip_eps = 1e-10 # clip values feeding to log function
         self.agg_w, self.agg_w_bg = np.reshape(np.array([0.996**i for i in range(41*41 -1, -1, -1)]),(1,-1,1)), np.reshape(np.array([0.999**i for i in range(41*41 -1, -1, -1)]),(1,-1))
 
     def build(self):
@@ -143,6 +144,7 @@ class GAIN():
             for i in range(batch_size): ret[i,:,:,:] = crf_inference(featemap[i], image[i], crf_config, self.category_num)
             ret[ret<self.min_prob] = self.min_prob
             ret /= np.sum(ret,axis=3, keepdims=True)
+            np.maximum(np.minimum(ret, self.clip_eps), 1)
             ret = np.log(ret)
             return ret.astype(np.float32)
         self.net[layer_name] = tf.py_func(crf, [self.net[featemap_layer], tf.image.resize_bilinear(self.net[img_layer]+self.data.img_mean, (41,41))],tf.float32) # shape [N, h, w, C]
@@ -239,7 +241,7 @@ class GAIN():
 
     def get_cl_loss(self): # seed + expand
         """SEC training loss (directly taken from xtudbxk's implementation for SEC[ECCV'16])"""
-        seed_loss = -tf.reduce_mean(tf.reduce_sum(self.net["cues"]*tf.log(self.net["fc8-softmax"]), axis=(1,2,3), keepdims=True)/tf.reduce_sum(self.net["cues"], axis=(1,2,3), keepdims=True))
+        seed_loss = -tf.reduce_mean(tf.reduce_sum(self.net["cues"]*tf.log(tf.clip_by_value(self.net["fc8-softmax"],self.clip_eps,1.0)), axis=(1,2,3), keepdims=True)/tf.reduce_sum(self.net["cues"], axis=(1,2,3), keepdims=True))
         expand_loss = tf.reduce_mean(tf.reduce_sum([tf.nn.sigmoid_cross_entropy_with_logits(logits=self.net["gwrp"][:,c], labels=tf.cast(tf.greater(self.net["label"][:,c], 0), tf.float32)) for c in range(self.category_num)]))
         self.loss["seed"] = seed_loss
         self.loss["expand"] = expand_loss
@@ -247,7 +249,7 @@ class GAIN():
     
     def get_crf_loss(self):
         """Constrain the Attention Map by Conditional Random Field(NIPS'11)"""
-        constrain_loss = tf.reduce_mean(tf.reduce_sum(tf.exp(self.net["crf"]) * tf.log(tf.exp(self.net["crf"])/self.net[self.mask_layer_name]), axis=3)) if self.with_crf else tf.constant(0.0)
+        constrain_loss = tf.reduce_mean(tf.reduce_sum(tf.exp(self.net["crf"]) * tf.log(tf.clip_by_value(tf.exp(self.net["crf"])/self.net[self.mask_layer_name],self.clip_eps,1.0)), axis=3)) if self.with_crf else tf.constant(0.0)
         self.loss["constrain"] = constrain_loss
         return constrain_loss
     

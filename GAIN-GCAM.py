@@ -40,7 +40,8 @@ class GAIN():
         self.net, self.loss, self.saver, self.weights, self.stride = {}, {}, {}, {}, {}
         self.trainable_list, self.lr_1_list, self.lr_2_list, self.lr_4_list, self.lr_8_list = [], [], [], [], []
         self.stride["input"], self.stride["input_c"] = 1, 1
-
+        self.clip_eps = 1e-10 # clip values feeding to log function
+        
     def build(self):
         if "output" not in self.net:
             with tf.name_scope("placeholder"):
@@ -128,6 +129,7 @@ class GAIN():
             for i in range(batch_size): ret[i,:,:,:] = crf_inference(featemap[i], image[i], crf_config, self.category_num)
             ret[ret<self.min_prob] = self.min_prob
             ret /= np.sum(ret,axis=3, keepdims=True)
+            np.maximum(np.minimum(ret, self.clip_eps), 1)
             ret = np.log(ret)
             return ret.astype(np.float32)
         self.net[layer_name] = tf.py_func(crf, [self.net[featemap_layer], tf.image.resize_bilinear(self.net[img_layer]+self.data.img_mean, (41,41))],tf.float32) # shape [N, h, w, C]
@@ -213,7 +215,7 @@ class GAIN():
         return tf.reduce_mean(tf.reduce_sum([tf.nn.sigmoid_cross_entropy_with_logits(logits=self.net["fc8"][:,c], labels=tf.cast(self.net["label"][:,c], tf.float32)) for c in range(self.category_num)]))
     def get_crf_loss(self):
         """Constrain the Attention Map by Conditional Random Field(NIPS'11)"""
-        constrain_loss = tf.reduce_mean(tf.reduce_sum(tf.exp(self.net["crf"]) * tf.log(tf.exp(self.net["crf"])/self.net[self.mask_layer_name]), axis=3)) if self.with_crf else tf.constant(0.0)
+        constrain_loss = tf.reduce_mean(tf.reduce_sum(tf.exp(self.net["crf"]) * tf.log(tf.clip_by_value(tf.exp(self.net["crf"])/self.net[self.mask_layer_name],self.clip_eps,1.0)), axis=3)) if self.with_crf else tf.constant(0.0)
         self.loss["constrain"] = constrain_loss
         return constrain_loss
     def get_am_loss(self):
@@ -221,7 +223,7 @@ class GAIN():
         ---------------------------------------------------------
         return the sum of class scores given the complement image `input_c`
         """
-        x = tf.reshape(tf.nn.sigmoid(self.net["input_c-fc8"]), (-1, self.category_num, category_num))
+        x = tf.reshape(tf.nn.sigmoid(tf.clip_by_value(self.net["input_c-fc8"],self.clip_eps,1.0)), (-1, self.category_num, category_num))
         score = tf.stack([x[:,c,c] for c in range(self.category_num)], axis=1)
         return tf.reduce_mean(tf.reduce_sum(score, axis=1) / tf.cast(tf.reduce_sum(self.net["label"], axis=1), tf.float32))
     
