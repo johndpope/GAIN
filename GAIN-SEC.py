@@ -23,7 +23,7 @@ This code implements GAIN with the following setting:
 def parse_arg():
     parser = optparse.OptionParser()
     parser.add_option('-g', dest='gpu_id', default='0', help="specify to run on which GPU")
-    parser.add_option('-f', dest='gpu_frac', default='0.49', help="specify the memory utilization of GPU")
+    parser.add_option('-f', dest='gpu_frac', default='0.99', help="specify the memory utilization of GPU")
     parser.add_option('-r', dest='restore_iter_id', default=None, help="continue training? default=False")
     parser.add_option('-a', dest='action', default='train', help="training or inference?")
     parser.add_option('-c', dest='with_crf', default=False, action='store_true', help="with CRF defult=False")
@@ -337,7 +337,7 @@ class GAIN():
                     print("{:.1f}th epoch, {}iters, lr={:.5f}, loss={:.5f}+{:.5f}+{:.5f}+{:.5f}={:.5f}".format(epoch, i, lr, loss_cl, loss_am, loss_crf, weight_decay*loss_l2, loss_total))
                     # generate mask samples
                     img_ids, pred_masks = self.sess.run([id_of_image, self.net[self.mask_layer_name]], feed_dict=params)
-                    self.save_masks(self, pred_masks, img_ids, PROB_PATH, pref=str(i))
+                    self.save_masks(pred_masks, img_ids, PROB_PATH, pref=str(i))
                     self.writer.add_summary(summary, global_step=i)
                 if i%3000 == 2999:
                     self.saver["norm"].save(self.sess, os.path.join(self.config.get("saver_path",SAVER_PATH),"norm"), global_step=i)
