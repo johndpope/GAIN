@@ -41,6 +41,7 @@ class GAIN():
         self.trainable_list, self.lr_1_list, self.lr_2_list, self.lr_4_list, self.lr_8_list = [], [], [], [], []
         self.stride["input"], self.stride["input_c"] = 1, 1
         self.clip_eps = 1e-10 # clip values feeding to log function
+        self.pre_train_epoch = 0.5 # train the classification model
         
     def build(self):
         if "output" not in self.net:
@@ -246,6 +247,7 @@ class GAIN():
         self.loss["total"] = self.loss["norm"] + weight_decay*self.loss["l2"]
         self.net["lr"] = tf.Variable(base_lr, trainable=False, dtype=tf.float32)
         opt = tf.train.AdamOptimizer(self.net["lr"],momentum)
+        # total
         gradients = opt.compute_gradients(self.loss["total"],var_list=self.trainable_list)
         self.grad = {}
         self.net["accum_gradient"] = []
@@ -261,6 +263,22 @@ class GAIN():
 
         self.net["accum_gradient_clean"] = [g.assign(tf.zeros_like(g)) for g in self.net["accum_gradient"]]
         self.net["accum_gradient_update"]  = opt.apply_gradients(new_gradients)
+        # only classification loss
+        gradients = opt.compute_gradients(self.loss["loss_cl"]+self.loss["l2"],var_list=self.trainable_list)
+        self.grad = {}
+        self.net["accum_gradient_cl"] = []
+        self.net["accum_gradient_accum_cl"] = []
+        new_gradients = []
+        for (g,v) in gradients:
+            if v in self.lr_2_list: g = 2*g
+            if v in self.lr_4_list: g = 4*g
+            if v in self.lr_8_list: g = 8*g
+            self.net["accum_gradient_cl"].append(tf.Variable(tf.zeros_like(g),trainable=False))
+            self.net["accum_gradient_accum_cl"].append(self.net["accum_gradient_cl"][-1].assign_add(g/self.accum_num, use_locking=True))
+            new_gradients.append((self.net["accum_gradient_cl"][-1],v))
+
+        self.net["accum_gradient_clean_cl"] = [g.assign(tf.zeros_like(g)) for g in self.net["accum_gradient_cl"]]
+        self.net["accum_gradient_update_cl"]  = opt.apply_gradients(new_gradients)
 
     def train(self, base_lr, weight_decay, momentum, batch_size, epoches, gpu_frac):
         if not os.path.exists(PROB_PATH): os.makedirs(PROB_PATH)
@@ -297,9 +315,13 @@ class GAIN():
                     base_lr = new_lr
                 data_x, data_y, data_id_of_image = self.sess.run([x, y, id_of_image])
                 params = {self.net["input"]:data_x, self.net["label"]:data_y, self.net["drop_prob"]:0.5}
-                self.sess.run(self.net["accum_gradient_accum"], feed_dict=params)
+                # train with only `loss_cl` for better Grad-CAM result, then train with full loss
+                if epoch < self.pre_train_epoch: self.sess.run(self.net["accum_gradient_accum_cl"], feed_dict=params)
+                else: self.sess.run(self.net["accum_gradient_accum"], feed_dict=params)
                 if i % self.accum_num == self.accum_num-1:
-                    _, _ = self.sess.run(self.net["accum_gradient_update"]), self.sess.run(self.net["accum_gradient_clean"])
+                    # train with only `loss_cl` for better Grad-CAM result, then train with full loss
+                    if epoch < self.pre_train_epoch: _, _ = self.sess.run(self.net["accum_gradient_update_cl"]), self.sess.run(self.net["accum_gradient_clean_cl"])
+                    else: _, _ = self.sess.run(self.net["accum_gradient_update"]), self.sess.run(self.net["accum_gradient_clean"])
                 if i%500 == 0:
                     summary, loss_cl, loss_am, loss_crf, loss_l2, loss_total, lr = self.sess.run([self.merged, self.loss["loss_cl"], self.loss["loss_am"], self.loss["loss_crf"], self.loss["l2"], self.loss["total"], self.net["lr"]], feed_dict=params)
                     print("{:.1f}th epoch, {}iters, lr={:.5f}, loss={:.5f}+{:.5f}+{:.5f}+{:.5f}={:.5f}".format(epoch, i, lr, loss_cl, loss_am, loss_crf, weight_decay*loss_l2, loss_total))
@@ -312,7 +334,7 @@ class GAIN():
                 i+=1
                 epoch = i/iterations_per_epoch_train
             end_time = time.time()
-            print("end_time:{}\nduration time:{}".format(end_time, (end_time-start_time)))
+            print("end_time:{}\nduration time:{}".format(end_time, (end_time-start_time)))    
     def save_masks(self, pred_masks, img_ids, save_dir, eps=1e-5, pref=None):
         try:
             for img_id, pred in zip(img_ids,pred_masks):
