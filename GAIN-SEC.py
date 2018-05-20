@@ -247,7 +247,7 @@ class GAIN():
     
     def get_crf_loss(self):
         """Constrain the Attention Map by Conditional Random Field(NIPS'11)"""
-        constrain_loss = tf.reduce_mean(tf.reduce_sum(tf.exp(self.net["crf"]) * tf.log(tf.exp(self.net["crf"])/self.net["fc8-softmax"]), axis=3)) if self.with_crf else tf.constant(0.0)
+        constrain_loss = tf.reduce_mean(tf.reduce_sum(tf.exp(self.net["crf"]) * tf.log(tf.exp(self.net["crf"])/self.net[self.mask_layer_name]), axis=3)) if self.with_crf else tf.constant(0.0)
         self.loss["constrain"] = constrain_loss
         return constrain_loss
     
