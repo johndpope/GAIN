@@ -51,14 +51,20 @@ class GAIN():
         return self.net["output"]
     def create_network(self):
         if "init_model_path" in self.config: self.load_init_model()
-        # architecture of VGG16
-        self.vgg16_layers = ["conv1_1","relu1_1","conv1_2","relu1_2","pool1","conv2_1","relu2_1","conv2_2","relu2_2","pool2","conv3_1","relu3_1","conv3_2","relu3_2","conv3_3","relu3_3","pool3","conv4_1","relu4_1","conv4_2","relu4_2","conv4_3","relu4_3","pool4","conv5_1","relu5_1","conv5_2","relu5_2","conv5_3","relu5_3","pool5","fc6","relu6","drop6","fc7","relu7","drop7","fc8"]
+        # Define network architecture
+        # Option 1: DeepLab-CRF-LargeFOV
+        deeplab_layers = ["conv1_1","relu1_1","conv1_2","relu1_2","pool1", "conv2_1","relu2_1","conv2_2","relu2_2","pool2","conv3_1","relu3_1","conv3_2","relu3_2","conv3_3","relu3_3","pool3","conv4_1","relu4_1","conv4_2","relu4_2","conv4_3","relu4_3","pool4","conv5_1","relu5_1","conv5_2","relu5_2","conv5_3","relu5_3","pool5","pool5a","fc6","relu6","drop6","fc7","relu7","drop7","fc8"]
+        # Option 2: modified DeepLab by removing several Conv+Pool layers
+        small_deeplab_layers = ["conv1_1","relu1_1","conv1_2","relu1_2","pool1","conv2_1","relu2_1","conv2_2","relu2_2","pool2","conv3_1","relu3_1","conv3_2","relu3_2","conv3_3","relu3_3","pool3","drop7","fc8"]
+        # self.network_layers, num_cv, self.last_cv, self.dim_fmap = deeplab_layers, 32, "pool5", 512
+        self.network_layers, num_cv, self.last_cv, self.dim_fmap = small_deeplab_layers, 17, "pool3", 256
+        
         # path of `input` to VGG16
-        with tf.name_scope("vgg16") as scope:
-            block = self.build_block("input", self.vgg16_layers[:31])
-            last_layer = self.build_fc(block, self.vgg16_layers[31:])
+        with tf.name_scope("base-cl") as scope:
+            block = self.build_block("input", self.network_layers[:num_cv])
+            last_layer = self.build_fc(block, self.network_layers[num_cv:])
             # generate the attention map with Grad-CAM
-            gcam = self.build_grad_cam(target="fc8", fmap="pool5")
+            gcam = self.build_grad_cam(target="fc8", fmap=self.last_cv)
             # remove discontiouous by CRF
             out = self.build_crf(gcam,"input") if self.with_crf else gcam
         
@@ -68,8 +74,8 @@ class GAIN():
                 var_scope.reuse_variables()
                 # generate `input_c`, which is the complement part of the image not selected by the attention map
                 input_c = self.build_input_c("gcam", "input")
-                block = self.build_block(input_c, self.vgg16_layers[:31], is_exist=True)
-                last_layer = self.build_fc(block, self.vgg16_layers[31:], is_exist=True)
+                block = self.build_block(input_c, self.network_layers[:num_cv], is_exist=True)
+                last_layer = self.build_fc(block, self.network_layers[num_cv:], is_exist=True)
         return self.net[out]
     def build_block(self, last_layer, layer_lists, is_exist=False):
         input_layer = last_layer
@@ -141,7 +147,7 @@ class GAIN():
             # normalize alpha
             alpha = alpha/tf.reduce_sum(alpha, axis=(0,1))
             # linear combine the feature map to generate CAM
-            cam_c = tf.reduce_sum(tf.reshape(tf.reshape(alpha, (-1,1))*tf.reshape(tf.transpose(A, [0,3,1,2]), (-1,41*41)), (-1,512,41*41)), axis=1)
+            cam_c = tf.reduce_sum(tf.reshape(tf.reshape(alpha, (-1,1))*tf.reshape(tf.transpose(A, [0,3,1,2]), (-1,41*41)), (-1,self.dim_fmap,41*41)), axis=1)
             cams.append(tf.nn.relu(cam_c))
         cams = tf.reshape(tf.stack(cams, axis=2), (-1,41,41,self.category_num))
         self.net[layer_name] = cams
@@ -184,7 +190,7 @@ class GAIN():
         if layer.startswith("fc"):
             if layer == "fc6": shape=[3,3,512,1024]
             elif layer == "fc7": shape=[1,1,1024,1024]
-            elif layer == "fc8": shape=[1024,self.category_num]
+            elif layer == "fc8": shape=[self.dim_fmap,self.category_num]
         if "init_model_path" not in self.config:
             weights = tf.get_variable(name="{}_weights".format(layer), initializer=tf.random_normal_initializer(stddev=0.01), shape=shape)
             bias = tf.get_variable(name="{}_bias".format(layer), initializer=tf.constant_initializer(0), shape=[shape[-1]])
@@ -336,7 +342,7 @@ if __name__ == "__main__":
     if opt.with_crf: SAVER_PATH, PRED_PATH = "gain_gcam_crf-saver", "gain_gcam_crf-preds"
     else: SAVER_PATH, PRED_PATH = "gain_gcam-saver", "gain_gcam-preds"
     # actual batch size=batch_size*accum_num
-    batch_size, input_size, category_num, epoches = 1, (321,321), 21, 5
+    batch_size, input_size, category_num, epoches = 1, (321,321), 21, 10
     category = "train+val" if opt.action == 'inference' else "train"
     data = dataset({"batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "categorys":[category]})
     if opt.restore_iter_id == None: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "init_model_path":"./model/init.npy", "accum_num":16, "with_crf":opt.with_crf})
