@@ -79,7 +79,6 @@ class GAIN():
                 var_scope.reuse_variables()
                 # generate `input_c`, which is the complement part of the image not selected by the attention map
                 input_c = self.build_input_c(gcam_sp, "input")
-                self.net["input_c-avg"] = tf.transpose(tf.reduce_mean(tf.reshape(self.net["input_c"], (-1,self.category_num,self.h,self.w,3)),axis=4), [0,2,3,1])
                 block = self.build_block(input_c, self.network_layers[:num_cv], is_exist=True)
                 fc = self.build_fc(block, self.network_layers[num_cv:], is_exist=True)
                 out = self.build_sp_softmax(fc, is_exist=True, layer_name="fc8-softmax")
@@ -184,12 +183,10 @@ class GAIN():
             att = tf.cast(tf.greater(att, self.att_th), tf.float32) # threshold masking
             img_c = tf.expand_dims(image-tf.reshape(tf.reshape(image, (-1,3))*tf.reshape(att, (-1,1)), (-1,self.h,self.w,3)), axis=1)
             rst.append(img_c)
-            masks.append(tf.expand_dims(att, axis=3))
+            masks.append(tf.expand_dims(1-att, axis=3))
         x = tf.concat(rst, axis=1)
-        mask = tf.concat(masks, axis=3)
         image_c = tf.reshape(x, (-1,self.h,self.w,3))
-        mask = tf.concat([tf.expand_dims(tf.zeros_like(mask[:,:,:,0]),axis=3),mask[:,:,:,1:]],axis=3)
-        self.net["mask"] = mask
+        self.net["mask"] = tf.concat(masks, axis=3)
         self.net[layer_name] = image_c
         return layer_name
     def load_init_model(self):
@@ -359,9 +356,9 @@ class GAIN():
         probs = np.nan_to_num(probs)
         probs[probs<eps] = eps
         return np.argmax(probs, axis=2)
-    def save_masks(self, pred_masks, img_ids, save_dir, eps=1e-5, pref=None, suf=None):
+    def save_masks(self, pred_masks, img_ids, save_dir, eps=1e-5, pref=None, suf=None, calc=True):
         for idx,img_id in enumerate(img_ids):
-            mask = self.calc_mask(pred_masks[idx], eps)
+            mask = self.calc_mask(pred_masks[idx], eps) if calc else pred_masks[idx]
             fname = img_id.decode("utf-8")
             fname = fname if suf is None else '-'.join([fname,suf])
             fname = fname if pref is None else '-'.join([pref,fname])
