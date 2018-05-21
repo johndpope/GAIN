@@ -40,7 +40,7 @@ class GAIN():
         self.stride["input"], self.stride["input_c"] = 1, 1
         self.clip_eps = 1e-10 # clip values feeding to log function
         self.mask_reg_lambda = 1e-3
-        self.pre_train_epoch = 5.0 # train the classification model
+        self.pre_train_epoch = 2.0 # train the classification model
         self.am_opt, self.att_th = 1, 0.5 # Option 1: Cross Entropy | Option 2: Sum of Scores by SEC
         self.opt_arch = 2 # Option 1: DeepLab | Option 2: small-DeepLab
         
@@ -68,7 +68,11 @@ class GAIN():
             out = self.build_sp_softmax(fc, axis=1, layer_name="fc8-softmax")
             # generate the attention map with Grad-CAM
             gcam = self.build_grad_cam(target="fc8-softmax", fmap=self.last_cv)
-            gcam_sp = self.build_sp_softmax(gcam, axis=3, layer_name="gcam-softmax")
+            # Option 1: softmax
+            # gcam_sp = self.build_sp_softmax(gcam, axis=3, layer_name="gcam-softmax") 
+            # Option 2: sigmoid
+            gcam_sp = "gcam-softmax"
+            self.net[gcam_sp] = tf.nn.sigmoid(self.net["gcam"])
             # remove discontiouous by CRF
             out = self.build_crf(gcam_sp,"input") if self.with_crf else gcam_sp
         
@@ -231,7 +235,8 @@ class GAIN():
 
     def get_cl_loss(self):
         """Loss of Multi-Label Classification"""
-        return -tf.reduce_mean(tf.reduce_sum(self.net["label"]*tf.log(self.net["fc8-softmax"]+self.clip_eps), axis=1))
+        x, z = self.net["fc8"], self.net["label"]
+        return tf.reduce_mean(tf.reduce_sum(tf.maximum(x,0) - x*z + tf.log(1+tf.exp(-tf.abs(x))), axis=1))
     def get_crf_loss(self):
         """Constrain the Attention Map by Conditional Random Field(NIPS'11)"""
         constrain_loss = tf.reduce_mean(tf.reduce_sum(tf.exp(self.net["crf"]) * tf.log(tf.exp(self.net["crf"])/tf.nn.sigmoid(self.net[self.mask_layer_name])+self.clip_eps), axis=3)) if self.with_crf else tf.constant(0.0)
@@ -249,7 +254,7 @@ class GAIN():
         if self.am_opt==2: # Option 2: Sum of Scores by SEC
             return tf.reduce_mean(tf.reduce_sum(tf.stack([x[:,c,c] for c in range(self.category_num)], axis=1), axis=1) / tf.reduce_sum(self.net["label"], axis=1))
     def get_mask_reg(self):
-        return tf.reduce_mean(tf.norm(tf.reduce_sum(self.net["mask"], axis=(1,2))))
+        return tf.reduce_mean(tf.reduce_sum(self.net["gcam-softmax"], axis=(1,2,3)))
     def add_loss_summary(self):
         tf.summary.scalar('cl-loss', self.loss["loss_cl"])
         tf.summary.scalar('am-loss', self.loss["loss_am"])
