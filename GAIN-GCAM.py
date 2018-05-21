@@ -67,11 +67,8 @@ class GAIN():
             fc = self.build_fc(block, self.network_layers[num_cv:])
             out = self.build_sp_softmax(fc, axis=1, layer_name="fc8-softmax")
             # generate the attention map with Grad-CAM
-            gcam = self.build_grad_cam(target="fc8-softmax", fmap=self.last_cv)
-            # Option 1: softmax
-            # gcam_sp = self.build_sp_softmax(gcam, axis=3, layer_name="gcam-softmax") 
-            # Option 2: sigmoid
-            gcam_sp = "gcam-softmax"
+            gcam = self.build_grad_cam(target="fc8", fmap=self.last_cv)
+            gcam_sp = "gcam-score"
             self.net[gcam_sp] = tf.nn.sigmoid(self.net["gcam"])
             # remove discontiouous by CRF
             out = self.build_crf(gcam_sp,"input") if self.with_crf else gcam_sp
@@ -160,7 +157,7 @@ class GAIN():
         Input: predicted target Y[#class], feature map A[w/8,h/8]
         return: CAM[#class,w/8,h/8], where CAM[c,:,:] = ReLU(\sum_k alpha_k*A^k)
         """
-        A, Y = self.net[fmap], self.net[target]
+        A, Y = self.net[fmap], self.net[target]*self.net["label"]
         cams = []
         for c in range(self.category_num):
             # calculate the importance of each feature map
@@ -191,6 +188,7 @@ class GAIN():
         x = tf.concat(rst, axis=1)
         mask = tf.concat(masks, axis=3)
         image_c = tf.reshape(x, (-1,self.h,self.w,3))
+        mask = tf.concat([tf.expand_dims(tf.zeros_like(mask[:,:,:,0]),axis=3),mask[:,:,:,1:]],axis=3)
         self.net["mask"] = mask
         self.net[layer_name] = image_c
         return layer_name
@@ -250,11 +248,12 @@ class GAIN():
         """
         x = tf.reshape(self.net["input_c-fc8-softmax"], (-1, self.category_num, category_num))
         if self.am_opt==1: # Option 1: Cross Entropy
-            return -tf.reduce_mean(tf.reduce_sum(self.net["label"]*tf.stack([x[:,c,c] for c in range(self.category_num)], axis=1), axis=1))
+            x = tf.stack([x[:,c,c] for c in range(self.category_num)], axis=1)
+            return tf.reduce_mean(tf.reduce_sum(tf.maximum(x,0)+tf.log(1+tf.exp(-tf.abs(x))), axis=1))
         if self.am_opt==2: # Option 2: Sum of Scores by SEC
             return tf.reduce_mean(tf.reduce_sum(tf.stack([x[:,c,c] for c in range(self.category_num)], axis=1), axis=1) / tf.reduce_sum(self.net["label"], axis=1))
     def get_mask_reg(self):
-        return tf.reduce_mean(tf.reduce_sum(self.net["gcam-softmax"], axis=(1,2,3)))
+        return tf.reduce_mean(tf.reduce_sum(self.net["gcam-score"], axis=(1,2,3)))
     def add_loss_summary(self):
         tf.summary.scalar('cl-loss', self.loss["loss_cl"])
         tf.summary.scalar('am-loss', self.loss["loss_am"])
