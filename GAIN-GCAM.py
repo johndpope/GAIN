@@ -35,14 +35,14 @@ class GAIN():
         self.h, self.w = self.config.get("input_size", (321,321))
         self.category_num, self.accum_num, self.with_crf = self.config.get("category_num",21), self.config.get("accum_num",1), self.config.get("with_crf",False)
         self.data, self.min_prob, self.iter_num = self.config.get("data",None), self.config.get("min_prob",0.0001), self.config.get("iter_num",0)
-        self.net, self.loss, self.saver, self.weights, self.stride = {}, {}, {}, {}, {}
+        self.net, self.loss, self.acc, self.saver, self.weights, self.stride = {}, {}, {}, {}, {}, {}
         self.trainable_list, self.lr_1_list, self.lr_2_list, self.lr_4_list, self.lr_8_list = [], [], [], [], []
         self.stride["input"], self.stride["input_c"] = 1, 1
         self.clip_eps = 1e-10 # clip values feeding to log function
         self.mask_reg_lambda = 1e-3
-        self.pre_train_epoch = 2.0 # train the classification model
+        self.pre_train_epoch = 5.0 # train the classification model
         self.am_opt, self.att_th = 1, 0.5 # Option 1: Cross Entropy | Option 2: Sum of Scores by SEC
-        self.opt_arch = 2 # Option 1: DeepLab | Option 2: small-DeepLab
+        self.opt_arch = 1 # Option 1: DeepLab | Option 2: small-DeepLab
         
     def build(self):
         if "output" not in self.net:
@@ -156,18 +156,18 @@ class GAIN():
         Input: predicted target Y[#class], feature map A[w/8,h/8]
         return: CAM[#class,w/8,h/8], where CAM[c,:,:] = ReLU(\sum_k alpha_k*A^k)
         """
-        A, Y = self.net[fmap], self.net[target]*self.net["label"]
+        A, Y = self.net[fmap], self.net[target]
         cams = []
         for c in range(self.category_num):
             # calculate the importance of each feature map
-            alpha = tf.reduce_sum(tf.gradients(Y[:,c], A)[0], axis=(1,2)) + self.clip_eps
+            alpha = tf.reduce_sum(tf.gradients(Y[:,c], A)[0], axis=(1,2)) + self.clip_eps # for numerical stability
             # normalize alpha
             alpha = alpha/tf.reduce_sum(alpha, axis=1, keepdims=True)
             # linear combine the feature map to generate CAM
             cam_c = tf.reduce_sum(tf.reshape(tf.reshape(alpha, (-1,1))*tf.reshape(tf.transpose(A, [0,3,1,2]), (-1,41*41)), (-1,self.dim_fmap,41*41)), axis=1)
             cams.append(tf.nn.relu(cam_c))
-        cams = tf.reshape(tf.stack(cams, axis=2), (-1,41,41,self.category_num))
-        cams /= (tf.reduce_sum(cams,axis=2,keepdims=True) + self.clip_eps)
+        cams = tf.reshape(tf.stack(cams, axis=2), (-1,41,41,self.category_num)) + self.clip_eps # for numerical stability
+        cams /= tf.reduce_sum(cams,axis=2,keepdims=True)
         self.net[layer_name] = cams
         return layer_name
     def build_input_c(self, att_layer, img_layer, layer_name="input_c"):
@@ -230,7 +230,7 @@ class GAIN():
 
     def get_cl_loss(self):
         """Loss of Multi-Label Classification"""
-        x, z = self.net["fc8"], self.net["label"]
+        x, z = self.net["fc8"][:,1:], self.net["label"][:,1:]
         return tf.reduce_mean(tf.reduce_sum(tf.maximum(x,0) - x*z + tf.log(1+tf.exp(-tf.abs(x))), axis=1))
     def get_crf_loss(self):
         """Constrain the Attention Map by Conditional Random Field(NIPS'11)"""
@@ -243,19 +243,31 @@ class GAIN():
         [?] Cross-Entropy
         [?] Sum of Scores by GAIN(ICCV'17)
         """
-        x = tf.reshape(self.net["input_c-fc8-softmax"], (-1, self.category_num, category_num))
         if self.am_opt==1: # Option 1: Cross Entropy
-            x = tf.stack([x[:,c,c] for c in range(self.category_num)], axis=1)
+            x = tf.reshape(self.net["input_c-fc8"], (-1, self.category_num, category_num))
+            x = tf.stack([x[:,c,c] for c in range(1,self.category_num)], axis=1)
             return tf.reduce_mean(tf.reduce_sum(tf.maximum(x,0)+tf.log(1+tf.exp(-tf.abs(x))), axis=1))
         if self.am_opt==2: # Option 2: Sum of Scores by SEC
-            return tf.reduce_mean(tf.reduce_sum(tf.stack([x[:,c,c] for c in range(self.category_num)], axis=1), axis=1) / tf.reduce_sum(self.net["label"], axis=1))
+            x = tf.reshape(self.net["input_c-fc8-softmax"], (-1, self.category_num, category_num))
+            return tf.reduce_mean(tf.reduce_sum(tf.stack([x[:,c,c] for c in range(1,self.category_num)], axis=1), axis=1)) / tf.reduce_sum(self.net["label"], axis=1)
     def get_mask_reg(self):
+        """
+        # Option 1
         return tf.reduce_mean(tf.reduce_sum(self.net["gcam-score"], axis=(1,2,3)))
+        """
+        # Option 2
+        x = tf.reduce_sum(self.net["gcam-score"][:,:,:,1:], axis=(1,2))
+        return tf.reduce_mean(tf.sqrt(tf.reduce_sum(x*x, axis=1)) / tf.reduce_sum(self.net["label"], axis=1))
+    def get_correct_num(self, score, label):
+        return tf.reduce_mean(tf.reduce_sum(tf.cast(tf.equal(tf.round(score[:,1:]), tf.round(label[:,1:])), tf.float32), axis=1))
+        
     def add_loss_summary(self):
         tf.summary.scalar('cl-loss', self.loss["loss_cl"])
         tf.summary.scalar('am-loss', self.loss["loss_am"])
         tf.summary.scalar('crf-loss', self.loss["loss_crf"])
         tf.summary.scalar('mask-reg', self.loss["mask_reg"])
+        tf.summary.scalar('input-correct', self.acc["input"])
+        tf.summary.scalar('input_c-correct', self.acc["input_c"])
         tf.summary.scalar('l2', self.loss["total"]-self.loss["norm"])
         tf.summary.scalar('total', self.loss["total"])
         self.merged = tf.summary.merge_all()
@@ -269,6 +281,9 @@ class GAIN():
         self.loss["norm"] = self.loss["loss_cl"] + self.loss["loss_am"] + self.loss["loss_crf"]
         self.loss["l2"] = tf.reduce_sum([tf.nn.l2_loss(self.weights[layer][0]) for layer in self.weights], axis=0)
         self.loss["total"] = self.loss["norm"] + weight_decay*self.loss["l2"] + self.mask_reg_lambda*self.loss["mask_reg"]
+        self.label_num = tf.cast(tf.reduce_sum(self.net["label"], axis=1), tf.int32)
+        self.acc["input"] = tf.cast(self.get_correct_num(self.net["fc8-softmax"], self.net["label"]), tf.int32)
+        self.acc["input_c"] = tf.cast(self.get_correct_num(self.net["input_c-fc8-softmax"], tf.zeros_like(self.net["label"])), tf.int32)
         self.net["lr"] = tf.Variable(base_lr, trainable=False, dtype=tf.float32)
         # opt = tf.train.MomentumOptimizer(self.net["lr"],momentum)
         opt = tf.train.AdamOptimizer(self.net["lr"])
@@ -336,8 +351,8 @@ class GAIN():
                     if epoch < self.pre_train_epoch: self.sess.run(self.net["accum_gradient_update_cl"]), self.sess.run(self.net["accum_gradient_clean_cl"])
                     else: self.sess.run(self.net["accum_gradient_update"]), self.sess.run(self.net["accum_gradient_clean"])
                 if i%500 == 0:
-                    summary, loss_cl, loss_am, mask_reg, loss_crf, loss_l2, loss_total, lr = self.sess.run([self.merged, self.loss["loss_cl"], self.loss["loss_am"], self.loss["mask_reg"], self.loss["loss_crf"], self.loss["l2"], self.loss["total"], self.net["lr"]], feed_dict=params)
-                    print("{:.1f}th epoch, {}iters, lr={:.5f}, loss={:.5f}+[{:.5f}+{:5f}]+{:.5f}+{:.5f}={:.5f}".format(epoch, i, lr, loss_cl, loss_am, mask_reg*self.mask_reg_lambda, loss_crf, weight_decay*loss_l2, loss_total))
+                    summary, label_num, input_correct, input_c_correct, loss_cl, loss_am, mask_reg, loss_crf, loss_l2, loss_total, lr = self.sess.run([self.merged, self.label_num, self.acc["input"], self.acc["input_c"], self.loss["loss_cl"], self.loss["loss_am"], self.loss["mask_reg"], self.loss["loss_crf"], self.loss["l2"], self.loss["total"], self.net["lr"]], feed_dict=params)
+                    print("{:.1f}th epoch, {}iters, lr={:.5f}, label={}[{}/{}], loss={:.5f}+[{:.5f}+{:5f}]+{:.5f}+{:.5f}={:.5f}".format(epoch, i, lr, label_num[0], input_correct, input_c_correct, loss_cl, loss_am, mask_reg*self.mask_reg_lambda, loss_crf, weight_decay*loss_l2, loss_total))
                     # generate mask samples
                     img_ids, pred_masks, input_c_mask = self.sess.run([id_of_image, self.net[self.mask_layer_name], self.net["mask"]], feed_dict=params)
                     self.save_masks(pred_masks, img_ids, PROB_PATH, pref=str(i))
@@ -397,5 +412,5 @@ if __name__ == "__main__":
     data = dataset({"batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "categorys":[category]})
     if opt.restore_iter_id == None: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "init_model_path":"./model/init.npy", "accum_num":16, "with_crf":opt.with_crf})
     else: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "model_path":"{}/norm-{}".format(SAVER_PATH, opt.restore_iter_id), "accum_num":16, "with_crf":opt.with_crf, "iter_num":int(opt.restore_iter_id)})
-    if opt.action == 'train': gain.train(base_lr=1e-3, weight_decay=5e-5, momentum=0.9, batch_size=batch_size, epoches=epoches, gpu_frac=float(opt.gpu_frac))
+    if opt.action == 'train': gain.train(base_lr=5e-4, weight_decay=5e-5, momentum=0.9, batch_size=batch_size, epoches=epoches, gpu_frac=float(opt.gpu_frac))
     elif opt.action == 'inference': gain.inference(gpu_frac=float(opt.gpu_frac))
