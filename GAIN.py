@@ -42,7 +42,7 @@ class GAIN():
         self.stride["input"] = 1
         self.stride["input_c"] = 1
         self.agg_w, self.agg_w_bg = np.reshape(np.array([0.996**i for i in range(41*41 -1, -1, -1)]),(1,-1,1)), np.reshape(np.array([0.999**i for i in range(41*41 -1, -1, -1)]),(1,-1))
-        self.opt_arch = 2 # Network Architecture: (1) DeepLab (2) small-DeepLab
+        self.opt_arch = 1 # Network Architecture: (1) DeepLab (2) small-DeepLab
         self.opt_agg = 2 # Aggregation(Pixel2Image) (1) Global-Average-Pool (2) Global-Weighted-Ranking-Pool SEC[ECCV'16]
 
     def build(self):
@@ -69,8 +69,8 @@ class GAIN():
             small_deeplab_layers = ["conv1_1","relu1_1","conv1_2","relu1_2","pool1",
                                     "conv2_1","relu2_1","conv2_2","relu2_2","pool2",
                                     "conv3_1","relu3_1","conv3_2","relu3_2","conv3_3","relu3_3","pool3",
-                                    "fc6","relu6","drop6","fc7","relu7","drop7","fc8"]
-            self.network_layers, num_cv, self.last_cv, self.dim_fmap, self.fc8_dim = small_deeplab_layers, 17, "pool3", 256, 256
+                                    "poola","fc8"]
+            self.network_layers, num_cv, self.last_cv, self.dim_fmap, self.fc8_dim = small_deeplab_layers, 18, "pool3", 256, 256
         # path of `input` to DeepLab
         with tf.name_scope("deeplab") as scope:
             block = self.build_block("input", self.network_layers[:num_cv])
@@ -197,9 +197,9 @@ class GAIN():
                 if layer in ["conv2_1","conv3_1","conv4_1"]: shape[2]=int(shape[2]/2)
             shape[3] = min(64*self.stride[layer], 512)
         if layer.startswith("fc"):
-            if layer == "fc6": shape=[3,3,self.dim_fmap,1024]
+            if layer == "fc6": shape=[3,3,512,1024]
             elif layer == "fc7": shape=[1,1,1024,1024]
-            elif layer == "fc8": shape=[1,1,1024,self.category_num]
+            elif layer == "fc8": shape=[1,1,self.dim_fmap,self.category_num]
         if "init_model_path" not in self.config:
             weights = tf.get_variable(name="{}_weights".format(layer), initializer=tf.random_normal_initializer(stddev=0.01), shape=shape)
             bias = tf.get_variable(name="{}_bias".format(layer), initializer=tf.constant_initializer(0), shape=[shape[-1]])
