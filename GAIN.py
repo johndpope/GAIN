@@ -11,7 +11,7 @@ from dataset import dataset
 from crf import crf_inference
 
 """
-GAIN-SEC
+GAIN-SEC(ICCV'17)
 ----------------------
 This code implements the model described in the experiment section of GAIN(https://arxiv.org/pdf/1802.10171.pdf)
  * Segmentation model: SEC(ECCV'16) with GWRPool separated
@@ -64,7 +64,7 @@ class GAIN():
                               "conv4_1","relu4_1","conv4_2","relu4_2","conv4_3","relu4_3","pool4",
                               "conv5_1","relu5_1","conv5_2","relu5_2","conv5_3","relu5_3","pool5",
                               "poola","fc6","relu6","drop6","fc7","relu7","drop7","fc8"]
-            self.network_layers, num_cv, self.last_cv, self.dim_fmap, self.fc8_dim = deeplab_layers, 32, "pool5", 512, 1024
+            self.network_layers, num_cv, self.last_cv, self.dim_fmap, self.fc8_dim, self.mask_layer_name = deeplab_layers, 32, "pool5", 512, 1024, "fc8-softmax"
         elif self.opt_arch==2: # Option 2: modified DeepLab by removing several Conv+Pool layers
             small_deeplab_layers = ["conv1_1","relu1_1","conv1_2","relu1_2","pool1",
                                     "conv2_1","relu2_1","conv2_2","relu2_2","pool2",
@@ -199,7 +199,7 @@ class GAIN():
         if layer.startswith("fc"):
             if layer == "fc6": shape=[3,3,512,1024]
             elif layer == "fc7": shape=[1,1,1024,1024]
-            elif layer == "fc8": shape=[1,1,self.dim_fmap,self.category_num]
+            elif layer == "fc8": shape=[1,1,1024,self.category_num]
         if "init_model_path" not in self.config:
             weights = tf.get_variable(name="{}_weights".format(layer), initializer=tf.random_normal_initializer(stddev=0.01), shape=shape)
             bias = tf.get_variable(name="{}_bias".format(layer), initializer=tf.constant_initializer(0), shape=[shape[-1]])
@@ -346,9 +346,10 @@ class GAIN():
             cPickle.dump(mask, open('{}/{}.pkl'.format(save_dir, fname), 'wb'))
     def inference(self, gpu_frac, eps=1e-5):
         if not os.path.exists(PRED_PATH): os.makedirs(PRED_PATH)
+        # Dump the predicted mask as numpy array to disk
         gpu_options = tf.ConfigProto(gpu_options=tf.GPUOptions(per_process_gpu_memory_fraction=gpu_frac))
         self.sess = tf.Session(config=gpu_options)
-        x, gt, _, _, id_of_image, iterator_train = self.data.next_batch(category="train",batch_size=1,epoches=-1)
+        x, gt, _, c, id_of_image, iterator_train = self.data.next_batch(batch_size=1,epoches=-1)
         self.build()
         self.saver["norm"] = tf.train.Saver(max_to_keep=2,var_list=self.trainable_list)
         with self.sess.as_default():
@@ -358,17 +359,10 @@ class GAIN():
             if self.config.get("model_path",False) is not False: self.restore_from_model(self.saver["norm"], self.config.get("model_path"), checkpoint=False)
             epoch, i, iterations_per_epoch_train = 0.0, 0, self.data.get_data_len()
             while epoch < 1:
-                data_x, data_gt, img_id = self.sess.run([x, gt, id_of_image])
-                cimg_id = img_id[0].decode("utf-8")
-                preds = self.sess.run(self.net["fc8-softmax"], feed_dict={self.net["input"]:data_x, self.net["drop_prob"]:0.5})
-                for pred in preds:
-                    img = Image.open("data/VOCdevkit/VOC2012/JPEGImages/{}.jpg".format(cimg_id)).resize((321,321), Image.ANTIALIAS)
-                    scores_exp = np.exp(pred-np.max(pred, axis=2, keepdims=True))
-                    probs = scores_exp/np.sum(scores_exp, axis=2, keepdims=True)
-                    probs = nd.zoom(probs, (321/probs.shape[0], 321/probs.shape[1], 1.0), order=1)
-                    probs[probs<eps] = eps
-                    mask = np.argmax(probs, axis=2)
-                    cPickle.dump(mask, open('{}/{}.pkl'.format(PRED_PATH, img_id[0].decode("utf-8")), 'wb'))
+                data_x, data_c, data_gt, img_ids = self.sess.run([x, c, gt, id_of_image])
+                fc8_mask = self.sess.run(self.net["fc8-softmax"], feed_dict={self.net["input"]:data_x, self.net["drop_prob"]:0.5})
+                self.save_masks(fc8_mask, img_ids, PRED_PATH, pref='10epoch', suf='fc8')
+                self.save_masks(data_c, img_ids, PRED_PATH, pref='10epoch', suf='cue')
                 i+=1
                 epoch = i/iterations_per_epoch_train
 
