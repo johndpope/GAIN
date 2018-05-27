@@ -19,6 +19,7 @@ This code implements the model described in the experiment section of GAIN(https
 """
 
 def parse_arg():
+    """Utility function for the convenience of parsing arguments from commands"""
     parser = optparse.OptionParser()
     parser.add_option('-g', dest='gpu_id', default='0', help='specify to run on which GPU')
     parser.add_option('-f', dest='gpu_frac', default='0.49', help='specify the memory utilization of GPU')
@@ -33,24 +34,30 @@ class GAIN():
         self.config = config
         # size of image(`input`)
         self.h, self.w = self.config.get("input_size", (321,321))
-        # size of complement image(`input_c`)
-        self.cw, self.ch = 321,321
+        # `accum_num` is used for calculating the moving-average of gradients required by some optimizers
         self.category_num, self.accum_num = self.config.get("category_num",21), self.config.get("accum_num",1)
         self.data, self.min_prob = self.config.get("data",None), self.config.get("min_prob",0.0001)
         self.net, self.loss, self.saver, self.weights, self.stride = {}, {}, {}, {}, {}
         self.trainable_list, self.lr_1_list, self.lr_2_list, self.lr_10_list, self.lr_20_list = [], [], [], [], []
-        self.stride["input"] = 1
-        self.stride["input_c"] = 1
+        self.stride["input"], self.stride["input_c"] = 1, 1
+        # the linear combining weight as described in SEC(ECCV'16) - Global-Weighted-Rank-Pooling
         self.agg_w, self.agg_w_bg = np.reshape(np.array([0.996**i for i in range(41*41 -1, -1, -1)]),(1,-1,1)), np.reshape(np.array([0.999**i for i in range(41*41 -1, -1, -1)]),(1,-1))
-        self.opt_arch = 1 # Network Architecture: (1) DeepLab (2) small-DeepLab
-        self.opt_agg = 2 # Aggregation(Pixel2Image) (1) Global-Average-Pool (2) Global-Weighted-Ranking-Pool SEC[ECCV'16]
-
+        # hyperparameter for weighting the regularization terms
+        self.lambda_l2 = 5e-5
+        # threshold for converting soft score to hard prediction
+        self.mask_coeff, self.mask_th = 10, 0.5
+        # Network Architecture: (1) DeepLab (2) small-DeepLab
+        self.opt_arch = 1
+        # Aggregation(Pixel2Image) (1) Global-Average-Pool (2) Global-Weighted-Ranking-Pool SEC(ECCV'16)
+        self.opt_agg = 2
+        # Recording Paths
+        self.SAVER_PATH, self.PRED_PATH, self.PROB_PATH = self.config.get("paths", ["saver", "preds", "probs"])
     def build(self):
         if "output" not in self.net:
             with tf.name_scope("placeholder"):
                 self.net["input"] = tf.placeholder(tf.float32,[None,self.h,self.w,self.config.get("input_channel",3)])
                 self.net["label"] = tf.placeholder(tf.int32,[None,self.category_num])
-                self.net["cues"] = tf.placeholder(tf.float32,[None,41,41,self.category_num])
+                self.net["cues"] = tf.placeholder(tf.float32,[None,41,41,self.category_num]) # localization cue - SEC(ECCV'16)
                 self.net["drop_prob"] = tf.placeholder(tf.float32)
             self.net["output"] = self.create_network()
         return self.net["output"]
@@ -71,25 +78,27 @@ class GAIN():
                                     "conv3_1","relu3_1","conv3_2","relu3_2","conv3_3","relu3_3","pool3",
                                     "poola","fc8"]
             self.network_layers, num_cv, self.last_cv, self.dim_fmap, self.fc8_dim = small_deeplab_layers, 18, "pool3", 256, 256
-        # path of `input` to DeepLab
+        # path of `input` to image-level score
         with tf.name_scope("deeplab") as scope:
             block = self.build_block("input", self.network_layers[:num_cv])
             fc = self.build_fc(block, self.network_layers[num_cv:])
         with tf.name_scope("sec") as scope:
             softmax = self.build_sp_softmax(fc) # SEC: `fc8-softmax` is our attention map
-            agg = self.build_aggregation(softmax)
-            crf = self.build_crf(fc,"input") # SEC: remove discontiouous by CRF
-        # path of `input_c` to DeepLab
+            agg = self.build_aggregation(softmax) # convert pixel-level predictions to image-level labels
+            crf = self.build_crf(fc,"input") # SEC: remove discontuity by CRF
+        # path of `input_c` to image-level score
         with tf.name_scope("am") as scope:
             with tf.variable_scope(tf.get_variable_scope().name, reuse=tf.AUTO_REUSE) as var_scope:
                 var_scope.reuse_variables()
+                # Take complement image `input_c`, which is the un-masked part
                 input_c = self.build_input_c("fc8-softmax", "input")
                 block = self.build_block(input_c, self.network_layers[:num_cv], is_exist=True)
                 fc = self.build_fc(block, self.network_layers[num_cv:], is_exist=True)
                 softmax = self.build_sp_softmax(fc, is_exist=True)
-                agg = self.build_aggregation(softmax, is_exist=True)
+                agg = self.build_aggregation(softmax, is_exist=True) # image-level score given `input_c`
         return self.net[crf]
     def build_block(self, last_layer, layer_lists, is_exist=False):
+        """Directly taken from (xtudbxk's repository)[xtudbxk/SEC-tensorflow]"""
         input_layer = last_layer
         for layer in layer_lists:
             player = layer if not is_exist else '-'.join([input_layer, layer])
@@ -161,22 +170,22 @@ class GAIN():
             return ret.astype(np.float32)
         self.net["crf"] = tf.py_func(crf, [self.net[featemap_layer], tf.image.resize_bilinear(self.net[img_layer]+self.data.img_mean, (41,41))],tf.float32) # shape [N, h, w, C]
         return "crf"
-    def build_input_c(self, att_layer, img_layer, w=10, th=0.5):
+    def build_input_c(self, att_layer, img_layer):
         """
         Generate the image complement.
         ------------------------------------------------------------------------
         Input: image I[w,h,3], attention map A[w/8,h/8,#class],
         return: image complement I[w,h,#class], where I[:,:,c] = I[:,:,c]-I[:,:,c]*resize(A[:,:,c])
         """
-        image, atts = tf.image.resize_bilinear(self.net[img_layer], (self.cw,self.ch)), tf.image.resize_bilinear(self.net[att_layer], (self.cw,self.ch))
+        image, atts = tf.image.resize_bilinear(self.net[img_layer], (self.w,self.h)), tf.image.resize_bilinear(self.net[att_layer], (self.w,self.h))
         layer = "input_c"
         rst = []
         for att in tf.unstack(atts, axis=3):
-            c = tf.expand_dims(image-tf.reshape(tf.multiply(tf.reshape(image, (-1,3)), tf.reshape(att, (-1,1))), (-1,self.cw,self.ch,3)), axis=1)
-            c = tf.nn.sigmoid(w*(c-th)) # threshold masking
+            c = tf.expand_dims(image-tf.reshape(tf.multiply(tf.reshape(image, (-1,3)), tf.reshape(att, (-1,1))), (-1,self.w,self.h,3)), axis=1)
+            c = tf.nn.sigmoid(self.mask_coeff*(c-self.mask_th)) # threshold masking
             rst.append(c)
         x = tf.stack(rst, axis=1)
-        image_c = tf.reshape(x, (-1,self.cw,self.ch,3))
+        image_c = tf.reshape(x, (-1,self.w,self.h,3))
         self.net[layer] = image_c
         return layer
     def load_init_model(self):
@@ -239,25 +248,23 @@ class GAIN():
         ---------------------------------------------------------
         return the sum of class scores given the complement image `input_c`
         """
-        w, h = int((self.cw+7)/8), int((self.ch+7)/8)
+        w, h = int((self.w+7)/8), int((self.h+7)/8)
         # convert pixel-level to image-level prediction of class labels
         agg = tf.stack([tf.reshape(tf.reduce_max(tf.reshape(self.net["input_c-fc8-softmax"], (-1, self.category_num, w*h, self.category_num))[:,i,:,i], axis=1), (-1,1)) for i in range(self.category_num)], axis=2)
-        return tf.reduce_mean(tf.reduce_sum(agg, axis=2) / tf.cast(tf.reduce_sum(self.net["label"], axis=1), tf.float32))
-    
+        return tf.reduce_mean(tf.reduce_sum(agg, axis=2) / tf.cast(tf.reduce_sum(self.net["label"], axis=1), tf.float32))   
     def add_loss_summary(self):
         tf.summary.scalar('cl-loss', self.loss["loss_cl"])
         tf.summary.scalar('am-loss', self.loss["loss_am"])
         tf.summary.scalar('l2', self.loss["total"]-self.loss["norm"])
         tf.summary.scalar('total', self.loss["total"])
         self.merged = tf.summary.merge_all()
-        self.writer = tf.summary.FileWriter(os.path.join(SAVER_PATH, 'sum'))
-
-    def optimize(self, base_lr, momentum, weight_decay):
+        self.writer = tf.summary.FileWriter(os.path.join(self.SAVER_PATH, 'sum'))
+    def optimize(self, base_lr, momentum):
         self.loss["loss_cl"] = self.get_cl_loss()
         self.loss["loss_am"] = self.get_am_loss()
         self.loss["norm"] = self.loss["loss_cl"] + self.loss["loss_am"]
         self.loss["l2"] = tf.reduce_sum([tf.nn.l2_loss(self.weights[layer][0]) for layer in self.weights], axis=0)
-        self.loss["total"] = self.loss["norm"] + weight_decay*self.loss["l2"]
+        self.loss["total"] = self.loss["norm"] + self.lambda_l2*self.loss["l2"]
         self.net["lr"] = tf.Variable(base_lr, trainable=False, dtype=tf.float32)
         opt = tf.train.MomentumOptimizer(self.net["lr"],momentum)
         gradients = opt.compute_gradients(self.loss["total"],var_list=self.trainable_list)
@@ -275,14 +282,13 @@ class GAIN():
 
         self.net["accum_gradient_clean"] = [g.assign(tf.zeros_like(g)) for g in self.net["accum_gradient"]]
         self.net["accum_gradient_update"]  = opt.apply_gradients(new_gradients)
-
-    def train(self, base_lr, weight_decay, momentum, batch_size, epoches, gpu_frac):
-        if not os.path.exists(PROB_PATH): os.makedirs(PROB_PATH)
+    def train(self, base_lr, momentum, batch_size, epoches, gpu_frac):
+        if not os.path.exists(self.PROB_PATH): os.makedirs(self.PROB_PATH)
         gpu_options = tf.ConfigProto(gpu_options=tf.GPUOptions(per_process_gpu_memory_fraction=gpu_frac))
         self.sess = tf.Session(config=gpu_options)
         x, _, y, c, id_of_image, iterator_train = self.data.next_batch(category="train",batch_size=batch_size,epoches=-1)
         self.build()
-        self.optimize(base_lr,momentum, weight_decay)
+        self.optimize(base_lr,momentum)
         self.saver["norm"] = tf.train.Saver(max_to_keep=2,var_list=self.trainable_list)
         self.saver["lr"] = tf.train.Saver(var_list=self.trainable_list)
         self.saver["best"] = tf.train.Saver(var_list=self.trainable_list,max_to_keep=2)
@@ -294,19 +300,19 @@ class GAIN():
             self.sess.run(iterator_train.initializer)
             if self.config.get("model_path",False) is not False: self.restore_from_model(self.saver["norm"], self.config.get("model_path"), checkpoint=False)
             start_time = time.time()
-            print("start_time: {}\nconfig -- lr:{} weight_decay:{} momentum:{} batch_size:{} epoches:{}".format(start_time, base_lr, weight_decay, momentum, batch_size, epoches))
+            print("start_time: {}\nconfig -- lr:{} momentum:{} batch_size:{} epoches:{}".format(start_time, base_lr, momentum, batch_size, epoches))
             
             epoch, i, iterations_per_epoch_train = 0.0, 0, self.data.get_data_len()//batch_size
             while epoch < epoches:
                 if i == 0: self.sess.run(tf.assign(self.net["lr"],base_lr))
                 if i == 10*iterations_per_epoch_train:
                     new_lr = 1e-4
-                    self.saver["lr"].save(self.sess, os.path.join(self.config.get("saver_path",SAVER_PATH),"lr-%f"%base_lr), global_step=i)
+                    self.saver["lr"].save(self.sess, os.path.join(self.SAVER_PATH,"lr-%f"%base_lr), global_step=i)
                     self.sess.run(tf.assign(self.net["lr"], new_lr))
                     base_lr = new_lr
                 if i == 20*iterations_per_epoch_train:
                     new_lr = 1e-5
-                    self.saver["lr"].save(self.sess, os.path.join(self.config.get("saver_path",SAVER_PATH),"lr-%f"%base_lr), global_step=i)
+                    self.saver["lr"].save(self.sess, os.path.join(self.SAVER_PATH,"lr-%f"%base_lr), global_step=i)
                     self.sess.run(tf.assign(self.net["lr"],new_lr))
                     base_lr = new_lr
                 data_x, data_y, data_c, data_id_of_image = self.sess.run([x, y, c, id_of_image])
@@ -316,15 +322,15 @@ class GAIN():
                     _, _ = self.sess.run(self.net["accum_gradient_update"]), self.sess.run(self.net["accum_gradient_clean"])
                 if i%100 == 0:
                     summary, loss_cl, loss_am, loss_l2, loss_total, lr = self.sess.run([self.merged, self.loss["loss_cl"], self.loss["loss_am"], self.loss["l2"], self.loss["total"], self.net["lr"]], feed_dict=params)
-                    print("{:.1f}th epoch, {}iters, lr={:.5f}, loss={:.5f}+{:.5f}+{:.5f}={:.5f}".format(epoch, i, lr, loss_cl, loss_am, weight_decay*loss_l2, loss_total))
+                    print("{:.1f}th epoch, {}iters, lr={:.5f}, loss={:.5f}+{:.5f}+{:.5f}={:.5f}".format(epoch, i, lr, loss_cl, loss_am, loss_l2, loss_total))
                     # generate mask samples
                     img_ids, fc8_mask = self.sess.run([id_of_image, self.net["fc8-softmax"]], feed_dict=params)
-                    self.save_masks(fc8_mask, img_ids, PROB_PATH, pref=str(i), suf='fc8')
-                    self.save_masks(data_c, img_ids, PROB_PATH, pref=str(i), suf='cue')
+                    self.save_masks(fc8_mask, img_ids, self.PROB_PATH, pref=str(i), suf='fc8')
+                    self.save_masks(data_c, img_ids, self.PROB_PATH, pref=str(i), suf='cue')
                     
                     self.writer.add_summary(summary, global_step=i)
                 if i%3000 == 2999:
-                    self.saver["norm"].save(self.sess, os.path.join(self.config.get("saver_path",SAVER_PATH),"norm"), global_step=i)
+                    self.saver["norm"].save(self.sess, os.path.join(self.config.get("saver_path",self.SAVER_PATH),"norm"), global_step=i)
                 i+=1
                 epoch = i/iterations_per_epoch_train
             end_time = time.time()
@@ -345,7 +351,7 @@ class GAIN():
             fname = fname if pref is None else '-'.join([pref,fname])
             cPickle.dump(mask, open('{}/{}.pkl'.format(save_dir, fname), 'wb'))
     def inference(self, gpu_frac, eps=1e-5):
-        if not os.path.exists(PRED_PATH): os.makedirs(PRED_PATH)
+        if not os.path.exists(self.PRED_PATH): os.makedirs(self.PRED_PATH)
         # Dump the predicted mask as numpy array to disk
         gpu_options = tf.ConfigProto(gpu_options=tf.GPUOptions(per_process_gpu_memory_fraction=gpu_frac))
         self.sess = tf.Session(config=gpu_options)
@@ -361,8 +367,8 @@ class GAIN():
             while epoch < 1:
                 data_x, data_c, data_gt, img_ids = self.sess.run([x, c, gt, id_of_image])
                 fc8_mask = self.sess.run(self.net["fc8-softmax"], feed_dict={self.net["input"]:data_x, self.net["drop_prob"]:0.5})
-                self.save_masks(fc8_mask, img_ids, PRED_PATH, pref='10epoch', suf='fc8')
-                self.save_masks(data_c, img_ids, PRED_PATH, pref='10epoch', suf='cue')
+                self.save_masks(fc8_mask, img_ids, self.PRED_PATH, pref='10epoch', suf='fc8')
+                self.save_masks(data_c, img_ids, self.PRED_PATH, pref='10epoch', suf='cue')
                 i+=1
                 epoch = i/iterations_per_epoch_train
 
@@ -376,9 +382,9 @@ if __name__ == "__main__":
         SAVER_PATH, PRED_PATH, PROB_PATH = '-'.join([opt.pre,SAVER_PATH]), '-'.join([opt.pre,PRED_PATH]), '-'.join([opt.pre,PROB_PATH])
     
     data = dataset({"batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "categorys":["train"]})
-    if opt.restore_iter_id == None: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "init_model_path":"./model/init.npy", "accum_num":16})
-    else: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "model_path":"{}/norm-{}".format(SAVER_PATH, opt.restore_iter_id), "accum_num":16})
+    if opt.restore_iter_id == None: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "init_model_path":"./model/init.npy", "accum_num":16, "paths":[SAVER_PATH, PRED_PATH, PROB_PATH]})
+    else: gain = GAIN({"data":data, "batch_size":batch_size, "input_size":input_size, "epoches":epoches, "category_num":category_num, "model_path":"{}/norm-{}".format(SAVER_PATH, opt.restore_iter_id), "accum_num":16, "paths":[SAVER_PATH, PRED_PATH, PROB_PATH]})
     if opt.action == 'train':
-        gain.train(base_lr=1e-3, weight_decay=5e-5, momentum=0.9, batch_size=batch_size, epoches=epoches, gpu_frac=float(opt.gpu_frac))
+        gain.train(base_lr=1e-3, momentum=0.9, batch_size=batch_size, epoches=epoches, gpu_frac=float(opt.gpu_frac))
     elif opt.action == 'inference':
         gain.inference(gpu_frac=float(opt.gpu_frac))
