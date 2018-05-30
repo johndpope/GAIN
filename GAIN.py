@@ -34,6 +34,7 @@ class GAIN():
         self.config = config
         # size of image(`input`)
         self.h, self.w = self.config.get("input_size", (321,321))
+        self.bsize = self.config.get("batch_size", 1)
         # `accum_num` is used for calculating the moving-average of gradients required by some optimizers
         self.category_num, self.accum_num = self.config.get("category_num",21), self.config.get("accum_num",1)
         self.data, self.min_prob = self.config.get("data",None), self.config.get("min_prob",0.0001)
@@ -56,7 +57,7 @@ class GAIN():
         if "output" not in self.net:
             with tf.name_scope("placeholder"):
                 self.net["input"] = tf.placeholder(tf.float32,[None,self.h,self.w,self.config.get("input_channel",3)])
-                self.net["label"] = tf.placeholder(tf.int32,[None,self.category_num])
+                self.net["label"] = tf.placeholder(tf.float32,[None,self.category_num])
                 self.net["cues"] = tf.placeholder(tf.float32,[None,41,41,self.category_num]) # localization cue - SEC(ECCV'16)
                 self.net["drop_prob"] = tf.placeholder(tf.float32)
             self.net["output"] = self.create_network()
@@ -157,7 +158,7 @@ class GAIN():
             score_bg = tf.expand_dims(tf.reduce_sum((tf.contrib.framework.sort(tf.reshape(self.net[last_layer][:,:,:,0],(-1,41*41)), axis=1)*self.agg_w_bg)/np.sum(self.agg_w_bg), axis=1),axis=1)
             self.net[player] = tf.concat([score_bg, scores], axis=1)
         return player
-    def build_crf(self, featemap_layer, img_layer): # SEC
+    def build_crf(self, featemap_layer, img_layer,fmap_size=(41,41), layer_name='crf'): # SEC
         def crf(featemap, image):
             crf_config = {"g_sxy":3/12,"g_compat":3,"bi_sxy":80/12,"bi_srgb":13,"bi_compat":10,"iterations":5}
             batch_size = featemap.shape[0]
@@ -168,8 +169,8 @@ class GAIN():
             ret /= np.sum(ret,axis=3, keepdims=True)
             ret = np.log(ret)
             return ret.astype(np.float32)
-        self.net["crf"] = tf.py_func(crf, [self.net[featemap_layer], tf.image.resize_bilinear(self.net[img_layer]+self.data.img_mean, (41,41))],tf.float32) # shape [N, h, w, C]
-        return "crf"
+        self.net[layer_name] = tf.py_func(crf, [self.net[featemap_layer], tf.image.resize_bilinear(self.net[img_layer]+self.data.img_mean, fmap_size)],tf.float32) # shape [N, h, w, C]
+        return layer_name
     def build_input_c(self, att_layer, img_layer):
         """
         Generate the image complement.
